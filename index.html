@@ -282,11 +282,14 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
 .favlab{display:block;font-size:10.5px;letter-spacing:.12em;color:var(--dim2);
   font-family:var(--f-num);margin-top:14px}
 #favBox .chips{margin-top:7px}
-#favBox .chips button{position:relative;padding-right:27px;color:var(--accent);
+#favBox .chips button{position:relative;padding-right:31px;color:var(--accent);
   border-color:rgba(181,80,47,.32)}
-#favBox .chips button i{position:absolute;right:7px;top:50%;transform:translateY(-50%);
-  font-style:normal;font-size:11px;color:var(--dim2);width:18px;height:18px;
-  display:grid;place-items:center}
+#favBox .chips button i{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  font-style:normal;font-size:11px;color:var(--dim2);width:22px;height:22px;
+  border-radius:50%;display:grid;place-items:center;
+  transition:background .18s var(--ease),color .18s var(--ease)}
+#favBox .chips button i:hover{background:rgba(181,80,47,.14);color:var(--accent)}
+#favBox .chips button i:active{background:rgba(181,80,47,.24);color:var(--accent)}
 .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
 .chips button{padding:7px 12px;border-radius:var(--r-pill);border:1px solid var(--line);
   font-size:12.5px;color:var(--dim);background:var(--canvas)}
@@ -315,6 +318,11 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
 .acc{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;opacity:.74;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;letter-spacing:.02em}
 .acc b{color:#B5502F;font-weight:600}
+#favBox .chips{max-height:104px;overflow-y:auto;overscroll-behavior:contain}
+#mConfirm .saveline{display:flex;gap:10px}
+#mConfirm .saveline button{flex:1 1 0}
+#cfCancel{background:transparent;color:inherit;
+  border:1px solid rgba(30,46,51,.22);opacity:.72}
 
 @media(prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
@@ -480,6 +488,17 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
     <div class="saveline">
       <button id="saveElev">用这个高度重算</button>
       <div class="note">不知道具体高度时：山谷底按 300–500 m，山腰 800–1200 m，山脊 1500 m 以上。留空则用 DEM 自动值。</div>
+    </div>
+  </div>
+
+  <!-- 弹层三：删除收藏的二次确认 -->
+  <div class="modal" id="mConfirm">
+    <div class="grab"></div>
+    <h3>删除这个收藏？</h3>
+    <p class="hint" id="cfText">这条收藏会从列表里移除。</p>
+    <div class="saveline">
+      <button id="cfOk">删除</button>
+      <button id="cfCancel">取消</button>
     </div>
   </div>
 </div></div>
@@ -903,12 +922,13 @@ $('#modelRows').addEventListener('click', e=>{
 });
 
 /* 弹层 */
-const scrim=$('#scrim'), mPlace=$('#mPlace'), mElev=$('#mElev');
+const scrim=$('#scrim'), mPlace=$('#mPlace'), mElev=$('#mElev'), mConfirm=$('#mConfirm');
 function openModal(which){
   const on = !!which;
   scrim.classList.toggle('on',on);
   mPlace.classList.toggle('on', which==='place');
   mElev.classList.toggle('on', which==='elev');
+  mConfirm.classList.toggle('on', which==='confirm');
   if(which==='elev') $('#elevInput').value = S.userElev;
 }
 scrim.onclick = ()=>openModal(null);
@@ -935,7 +955,7 @@ function toggleFav(p){
   const i=a.findIndex(x=>Math.abs(x.lat-p.lat)<1e-6 && Math.abs(x.lon-p.lon)<1e-6);
   if(i>=0){ a.splice(i,1); saveFavs(a); renderFavs(); return false; }
   a.unshift({name:p.name, lat:p.lat, lon:p.lon, elev:p.elev});
-  a.splice(8);                       // 最多留八个，别把弹层撑满
+  /* 不自动淘汰：收藏由用户自己点 ✕ 删，删前二次确认 */
   saveFavs(a); renderFavs(); return true;
 }
 
@@ -997,12 +1017,33 @@ resBox.addEventListener('click', async e=>{
            elev:r.elevation!=null?Math.round(r.elevation):500});
 });
 
+let pendingDel = null;   /* 待确认删除的收藏，存坐标而不是索引，免得列表变动后删错 */
+
 $('#favBox').addEventListener('click', async e=>{
   const del=e.target.closest('[data-del]');
-  if(del){ e.stopPropagation(); const a=favs(); a.splice(+del.dataset.del,1); saveFavs(a); renderFavs(); return; }
+  if(del){
+    e.stopPropagation();
+    const a=favs(); const p=a[+del.dataset.del]; if(!p) return;
+    pendingDel = {lat:p.lat, lon:p.lon, name:p.name};
+    $('#cfText').textContent = `「${p.name}」将从收藏里移除。删掉后要再搜一次才能加回来。`;
+    openModal('confirm');
+    return;
+  }
   const b=e.target.closest('[data-fav-i]'); if(!b) return;
   const a=favs(); const p=a[+b.dataset.favI]; if(p) goPlace(p);
 });
+
+$('#cfCancel').onclick = ()=>{ pendingDel=null; openModal('place'); renderFavs(); };
+$('#cfOk').onclick = ()=>{
+  if(!pendingDel){ openModal(null); return; }
+  const a=favs();
+  const i=a.findIndex(x=>Math.abs(x.lat-pendingDel.lat)<1e-6 && Math.abs(x.lon-pendingDel.lon)<1e-6);
+  const nm = pendingDel.name;
+  if(i>=0){ a.splice(i,1); saveFavs(a); }
+  pendingDel = null;
+  renderFavs(); openModal('place');
+  toast(`已删除收藏「${nm}」`);
+};
 
 /* 海拔 */
 $('#saveElev').onclick = ()=>{
