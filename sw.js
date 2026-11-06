@@ -1,5 +1,5 @@
 /* 脊线 · 离线壳 */
-const CACHE = 'jixian-v2';
+const CACHE = 'tianqiyubao-v1';
 const ASSETS = ['./', './index.html', './manifest.json',
                 './icon-192.png', './icon-512.png', './icon-mask-512.png'];
 
