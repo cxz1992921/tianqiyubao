@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="theme-color" content="#1E2E33">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="脊线">
+<title>脊线 · 六模型山区天气对照</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   脊线 — 多模型山区天气对照台
+   设计决定：
+   · 底色是"地图纸"的暖白，不是纯白；世界色是山体墨青，只出现在地形带。
+   · 强调色只有一个：陶土赭（取自太行山剖面的岩层），只给"被选中的那条模型线"
+     和唯一的主按钮。六条模型线不用六种颜色 —— 用三种明度 × 两种线型区分，
+     这样"挑出一条"才是画面里唯一的彩色事件。
+   · 字体三族：衬线只做地名与数字结论，无衬线做正文，等宽做数值。
+     中文衬线全部走系统内置，离线可用，不依赖任何 CDN。
+   ══════════════════════════════════════════════════════════════════ */
+
+:root{
+  --canvas:#F4F2ED;          /* 地图纸底色 L≈95，暖偏 */
+  --surface:#FBFAF7;         /* 叠在纸上的白壳 */
+  --world:#1E2E33;           /* 山体墨青：地形带 / 图表主色 */
+  --accent:#B5502F;          /* 陶土赭：唯一的饱和色 */
+  --ink:#1C2024;
+  --dim:#6E6C64;
+  --dim2:#95928A;
+  --line:#DFD9CD;
+  --line2:#EDE8DE;
+
+  --l1:#11252A; --l2:#28434A; --l3:#44626A;
+  --l4:#5F7C84; --l5:#7B969C; --l6:#9BAFB3;
+
+  --f-display:Georgia,"Songti SC","SimSun","Noto Serif SC",serif;
+  --f-body:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --f-num:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+
+  --r-shell:22px; --r-card:8px; --r-ctl:10px; --r-pill:999px;
+  --pad:16px;
+  --shadow-card:0 1px 2px rgba(30,46,51,.05),0 10px 24px -10px rgba(30,46,51,.10);
+  --shadow-float:0 2px 6px rgba(30,46,51,.06),0 18px 40px -14px rgba(30,46,51,.18);
+  --ease:cubic-bezier(.22,.75,.3,1);
+
+  --stage-1:#E7E3DA; --stage-2:#CFCBC0;
+  --frame:#FFFFFF; --frame-2:#D9D4C7;
+  --halo-1:#B5502F; --halo-2:#1E2E33; --halo-a:.24;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--canvas);color:var(--ink);overflow:hidden;
+  font-family:var(--f-body);font-size:15.5px;line-height:1.62;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;min-height:24px}
+img,svg{display:block;max-width:100%}
+input{font:inherit;color:inherit;background:none;border:0;outline:none}
+
+/* ── 桌面：手机放在"山雾"场里，不是贴在一块纯色上 ── */
+.stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:radial-gradient(120% 88% at 50% 4%,var(--stage-1),var(--stage-2) 74%)}
+.stage::before{content:"";position:absolute;inset:-18%;z-index:0;pointer-events:none;
+  opacity:var(--halo-a);filter:blur(96px);
+  background:
+    radial-gradient(36% 28% at 20% 22%,var(--halo-1),transparent 70%),
+    radial-gradient(44% 34% at 78% 76%,var(--halo-2),transparent 72%)}
+#app{position:relative;z-index:1;width:100%;height:100%;overflow:hidden;background:var(--canvas)}
+@media(min-width:760px){
+  #app{width:390px;height:min(844px,88vh);border-radius:40px;
+    box-shadow:0 0 0 10px var(--frame),0 0 0 12px var(--frame-2),
+               0 30px 80px rgba(30,46,51,.26)}
+  .notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    width:104px;height:24px;border-radius:13px;background:var(--frame);z-index:60}
+}
+@media(max-width:759px){.notch{display:none}.stage::before{display:none}}
+
+.statusbar{position:absolute;top:0;left:0;right:0;z-index:55;height:42px;padding:0 22px;
+  display:flex;align-items:center;justify-content:space-between;pointer-events:none;
+  font-family:var(--f-num);font-size:12.5px;color:var(--dim)}
+.sb-r{display:flex;align-items:center;gap:5px}
+.sb-r i{display:block;background:currentColor;border-radius:1px}
+.sb-r .sig{width:15px;height:10px;
+  clip-path:polygon(0 72%,18% 72%,18% 100%,0 100%,0 72%,27% 46%,45% 46%,45% 100%,27% 100%,27% 46%,54% 22%,72% 22%,72% 100%,54% 100%,54% 22%,82% 0,100% 0,100% 100%,82% 100%)}
+.sb-r .wifi{width:14px;height:10px;
+  clip-path:polygon(50% 100%,32% 74%,68% 74%,50% 100%,50% 66%,20% 40%,28% 30%,72% 30%,80% 40%,50% 66%,50% 24%,8% 12%,14% 2%,86% 2%,92% 12%)}
+.sb-r .bat{width:22px;height:11px;border-radius:3px;position:relative;background:none;
+  box-shadow:inset 0 0 0 1px currentColor}
+.sb-r .bat::before{content:"";position:absolute;inset:2px;width:64%;background:currentColor;border-radius:1px}
+
+/* ── 地形带：这一稿唯一的"画面"，是产品世界本身 ── */
+.ridge{position:absolute;top:0;left:0;right:0;height:168px;z-index:12;
+  background:linear-gradient(178deg,#243940,#16242A 76%);
+  border-radius:0 0 var(--r-shell) var(--r-shell);overflow:hidden}
+.ridge .prof{position:absolute;left:0;right:0;bottom:0;width:100%;height:46px;opacity:.62}
+.ridge .haze{position:absolute;inset:0;
+  background:radial-gradient(70% 58% at 74% 8%,rgba(181,80,47,.22),transparent 66%),
+             radial-gradient(60% 50% at 18% 84%,rgba(147,168,173,.20),transparent 70%)}
+.ridge .hair{position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(244,242,237,.18)}
+
+/* 顶部栏：身份 + 一个入口 */
+.topbar{position:absolute;top:0;left:0;right:0;z-index:50;
+  padding:calc(env(safe-area-inset-top) + 48px) 22px 0;
+  display:flex;align-items:flex-start;gap:12px;color:#F1EEE6}
+.brand{flex:1;min-width:0}
+.brand .kicker{font-family:var(--f-num);font-size:10.5px;letter-spacing:.16em;
+  color:rgba(241,238,230,.62);text-transform:uppercase}
+.brand h1{font-family:var(--f-display);font-weight:600;font-size:30px;line-height:1.18;
+  letter-spacing:.01em;margin-top:9px;overflow-wrap:anywhere;word-break:keep-all}
+.brand .geo{font-family:var(--f-num);font-size:11.5px;color:rgba(241,238,230,.72);
+  margin-top:8px;letter-spacing:.02em;text-shadow:0 1px 3px rgba(10,18,22,.55)}
+.iconbtn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid rgba(241,238,230,.26);color:rgba(241,238,230,.92);
+  transition:background .2s var(--ease),transform .2s var(--ease);flex:0 0 auto}
+.iconbtn:active{transform:scale(.94)}
+.iconbtn.rot svg{animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.iconbtn .ic{width:19px;height:19px}
+
+/* ── 内容流：一条连续滚动，产品首页放得下十几条信息 ── */
+#flow{position:relative;z-index:10;height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+  padding:calc(env(safe-area-inset-top) + 168px) 18px
+          calc(96px + env(safe-area-inset-bottom) + 26px)}
+#flow::-webkit-scrollbar{display:none}
+.panel[hidden]{display:none}
+
+/* 结论卡：分歧是这一屏的结论，数字用衬线，别做成巨数字年报 */
+.verdict{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:14px var(--pad) 12px;box-shadow:var(--shadow-card);margin-bottom:12px}
+.verdict .lbl{display:flex;align-items:center;gap:7px;font-size:11.5px;letter-spacing:.06em;
+  color:var(--dim)}
+.verdict .lbl::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.verdict .big{display:flex;align-items:baseline;gap:9px;margin-top:6px}
+.verdict .big b{font-family:var(--f-display);font-size:41px;font-weight:600;line-height:1;
+  letter-spacing:-.01em;color:var(--ink)}
+.verdict .big .u{font-family:var(--f-num);font-size:13px;color:var(--dim)}
+.verdict .big .win{margin-left:auto;flex:0 0 118px;font-family:var(--f-num);font-size:10.5px;
+  color:var(--dim);text-align:right;line-height:1.55;letter-spacing:-.01em}
+.verdict .note{font-size:12.5px;color:var(--dim);margin-top:9px;line-height:1.55}
+/* 一致性刻度：三段，指示器落在哪一段就是今天的可信度 */
+.scale{margin-top:12px}
+.scale .bar{display:flex;height:5px;border-radius:3px;overflow:hidden;gap:2px}
+.scale .bar i{flex:1;border-radius:2px}
+.scale .bar .s1{background:var(--l5)}
+.scale .bar .s2{background:var(--l3)}
+.scale .bar .s3{background:var(--accent);opacity:.52}
+.scale .mk{position:relative;height:13px;margin-top:2px}
+.scale .mk i{position:absolute;top:0;width:1.5px;height:9px;background:var(--ink);
+  transition:left .5s var(--ease)}
+.scale .mk i::after{content:"";position:absolute;top:-3px;left:-1.5px;width:4.5px;height:4.5px;
+  border-radius:50%;background:var(--ink)}
+.scale .tags{display:flex;justify-content:space-between;font-family:var(--f-num);
+  font-size:10px;color:var(--dim2);letter-spacing:.04em;margin-top:1px}
+
+/* 变量切换：这是第一个真实状态 */
+.seg{display:flex;gap:6px;margin-bottom:10px}
+.seg button{flex:1;padding:9px 0;border-radius:var(--r-ctl);border:1px solid var(--line);
+  background:var(--canvas);font-size:13.5px;color:var(--dim);
+  transition:background .18s var(--ease),color .18s var(--ease),border-color .18s var(--ease)}
+.seg button .v{display:block;font-family:var(--f-num);font-size:10.5px;color:var(--dim2);
+  margin-top:1px;letter-spacing:.03em}
+.seg button.on{background:var(--world);border-color:var(--world);color:#F1EEE6}
+.seg button.on .v{color:rgba(241,238,230,.62)}
+
+/* 图表卡 */
+.chart{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:12px var(--pad) 8px;box-shadow:var(--shadow-card);margin-bottom:12px}
+.chart .hd{display:flex;align-items:flex-end;gap:10px;margin-bottom:2px}
+.chart .hd h2{font-family:var(--f-display);font-size:17px;font-weight:600;line-height:1.3}
+.chart .hd .r{margin-left:auto;font-family:var(--f-num);font-size:10.5px;color:var(--dim2);
+  text-align:right;line-height:1.4}
+.chart .sub{font-size:11px;color:var(--dim);margin-bottom:7px;line-height:1.5}
+.plot{position:relative;height:168px}
+.plot svg{width:100%;height:168px}
+.plot .skel{position:absolute;inset:0;border-radius:6px;
+  background:linear-gradient(90deg,#EFEBE2,#F8F6F1,#EFEBE2);
+  background-size:200% 100%;animation:sh 1.3s linear infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.plot .skel[hidden]{display:none}
+
+/* 模型行：密集列表，一屏六行，几乎没有图 —— 这是正当的产品形态 */
+.rows{margin-bottom:14px}
+.rows .cap{display:flex;align-items:baseline;font-size:11.5px;color:var(--dim);
+  letter-spacing:.05em;margin-bottom:8px}
+.rows .cap .r{margin-left:auto;font-family:var(--f-num);font-size:10px;color:var(--dim2)}
+.row{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  padding:11px 2px;border-bottom:1px solid var(--line2);
+  transition:background .18s var(--ease)}
+.row:last-child{border-bottom:0}
+.row .nm{min-width:0;flex:1}
+.row .nm b{display:block;font-size:13.5px;font-weight:600;letter-spacing:.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm span{display:block;font-size:11px;color:var(--dim2);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .spark{flex:0 0 auto;width:52px;height:20px;opacity:.75}
+.row .val{flex:0 0 auto;text-align:right;font-family:var(--f-num);font-size:14px;
+  font-variant-numeric:tabular-nums;min-width:52px}
+.row .val em{display:block;font-style:normal;font-size:10.5px;color:var(--dim2);margin-top:1px}
+.row.on .nm b{color:var(--accent)}
+.row.on .val{color:var(--accent)}
+.row.on .spark{opacity:1}
+
+/* 高程修正：山区专属价值，这一稿的产品理由 */
+.elev{background:var(--world);color:#F1EEE6;border-radius:var(--r-card);
+  padding:16px var(--pad);margin-bottom:14px;box-shadow:var(--shadow-float)}
+.elev .hd{display:flex;align-items:baseline;gap:8px}
+.elev .hd h2{font-family:var(--f-display);font-size:16.5px;font-weight:600}
+.elev .hd .r{margin-left:auto;font-family:var(--f-num);font-size:10px;
+  letter-spacing:.1em;color:rgba(241,238,230,.55);text-transform:uppercase}
+.elev .pair{display:flex;align-items:center;gap:12px;margin-top:13px}
+.elev .col{flex:1}
+.elev .col .k{font-family:var(--f-num);font-size:10px;letter-spacing:.08em;
+  color:rgba(241,238,230,.56)}
+.elev .col .n{font-family:var(--f-display);font-size:23px;line-height:1.25;margin-top:2px}
+.elev .col .n small{font-family:var(--f-num);font-size:10px;color:rgba(241,238,230,.6);
+  margin-left:5px;letter-spacing:.02em}
+.elev .arrow{flex:0 0 auto;font-family:var(--f-num);font-size:12px;
+  color:rgba(241,238,230,.55)}
+.elev .d{font-size:12px;line-height:1.6;color:rgba(241,238,230,.72);margin-top:12px;
+  padding-top:11px;border-top:1px solid rgba(241,238,230,.14)}
+.elev .d b{color:#F1EEE6;font-weight:600}
+.elev .d .warn{color:#E9A886}
+
+/* 脚注 */
+.foot{font-size:11px;color:var(--dim2);line-height:1.7;padding:2px 2px 0}
+.foot .l{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px}
+.foot .l span{border:1px solid var(--line);border-radius:3px;padding:1px 5px;
+  font-family:var(--f-num);font-size:9.5px;color:var(--dim)}
+
+/* ── 底栏：主操作在拇指区。工具类不需要 tab。 ── */
+.dock{position:absolute;left:0;right:0;bottom:0;z-index:40;display:flex;gap:10px;
+  padding:11px 18px calc(env(safe-area-inset-bottom) + 13px);
+  background:linear-gradient(180deg,rgba(244,242,237,0),var(--canvas) 36%)}
+.dock .go{flex:1;height:47px;border-radius:var(--r-ctl);background:var(--accent);
+  color:#FCF9F4;font-weight:600;font-size:14.5px;letter-spacing:.02em;
+  display:flex;align-items:center;justify-content:center;gap:7px;
+  box-shadow:0 10px 22px -12px rgba(181,80,47,.72);
+  transition:transform .18s var(--ease),filter .18s var(--ease)}
+.dock .go:active{transform:scale(.985);filter:brightness(.94)}
+.dock .alt{flex:0 0 92px;height:47px;border-radius:var(--r-ctl);
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px}
+.dock .ic{width:16px;height:16px}
+
+/* ── 弹层：相对取景框定位，不用 fixed ── */
+.scrim{position:absolute;inset:0;z-index:88;background:rgba(20,30,34,.42);
+  opacity:0;pointer-events:none;transition:opacity .26s var(--ease)}
+.scrim.on{opacity:1;pointer-events:auto}
+.modal{position:absolute;left:0;right:0;bottom:0;z-index:90;background:var(--surface);
+  border-radius:20px 20px 0 0;padding:14px 18px calc(env(safe-area-inset-bottom) + 20px);
+  max-height:84%;overflow-y:auto;transform:translateY(101%);
+  visibility:hidden;pointer-events:none;
+  box-shadow:0 -18px 44px -18px rgba(20,30,34,.34);
+  transition:transform .3s var(--ease)}
+.modal.on{transform:translateY(0);visibility:visible;pointer-events:auto}
+.modal .grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
+.modal h3{font-family:var(--f-display);font-size:18px;font-weight:600;margin-bottom:4px}
+.modal p.hint{font-size:12px;color:var(--dim);line-height:1.55;margin-bottom:12px}
+.field{display:flex;align-items:center;gap:9px;border:1px solid var(--line);
+  border-radius:var(--r-ctl);padding:0 12px;height:46px;background:var(--canvas)}
+.field:focus-within{border-color:var(--l3);background:var(--surface)}
+.field .ic{width:17px;height:17px;color:var(--dim)}
+.field input{flex:1;font-size:15px;height:100%}
+.field input::placeholder{color:var(--dim2)}
+.res{margin-top:10px}
+.res button{display:flex;width:100%;text-align:left;align-items:center;gap:10px;
+  padding:11px 10px;border-radius:var(--r-ctl);border-bottom:1px solid var(--line2)}
+.res button .nm{flex:1;min-width:0}
+.res button .nm b{display:block;font-size:14px;font-weight:600}
+.res button .nm span{display:block;font-size:11px;color:var(--dim2);margin-top:1px}
+.res button .el{font-family:var(--f-num);font-size:11.5px;color:var(--dim)}
+.res button .star{font-style:normal;font-size:15px;color:var(--accent);flex:none;
+  width:30px;height:28px;display:grid;place-items:center;margin-left:2px;
+  border-radius:8px}
+.res .empty{font-size:12.5px;color:var(--dim2);padding:12px 4px}
+.favlab{display:block;font-size:10.5px;letter-spacing:.12em;color:var(--dim2);
+  font-family:var(--f-num);margin-top:14px}
+#favBox .chips{margin-top:7px}
+#favBox .chips button{position:relative;padding-right:27px;color:var(--accent);
+  border-color:rgba(181,80,47,.32)}
+#favBox .chips button i{position:absolute;right:7px;top:50%;transform:translateY(-50%);
+  font-style:normal;font-size:11px;color:var(--dim2);width:18px;height:18px;
+  display:grid;place-items:center}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+.chips button{padding:7px 12px;border-radius:var(--r-pill);border:1px solid var(--line);
+  font-size:12.5px;color:var(--dim);background:var(--canvas)}
+.numrow{display:flex;align-items:center;gap:12px;margin-top:4px}
+.numrow .field{flex:1}
+.numrow .unit{font-family:var(--f-num);font-size:12px;color:var(--dim)}
+.saveline{margin-top:14px}
+.saveline button{width:100%;height:46px;border-radius:var(--r-ctl);background:var(--world);
+  color:#F1EEE6;font-weight:600;font-size:14px}
+.saveline .note{font-size:11.5px;color:var(--dim2);line-height:1.6;margin-top:10px}
+
+.toast{position:absolute;left:50%;bottom:calc(74px + env(safe-area-inset-bottom));z-index:92;
+  transform:translate(-50%,12px);opacity:0;pointer-events:none;max-width:80%;
+  padding:10px 16px;border-radius:var(--r-pill);background:rgba(28,32,36,.9);
+  color:#FAF8F3;font-size:13px;line-height:1.5;text-align:center;
+  transition:opacity .26s var(--ease),transform .26s var(--ease)}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .skel{background:#EFEBE2}
+}
+</style>
+</head>
+<body>
+<div class="stage"><div id="app">
+  <div class="notch"></div>
+
+  <div class="statusbar">
+    <span id="clock">19:12</span>
+    <span class="sb-r"><i class="sig"></i><i class="wifi"></i><i class="bat"></i></span>
+  </div>
+
+  <!-- 地形带：产品世界本身。剖面由 Elevation API 的真实 DEM 采样画出 -->
+  <div class="ridge">
+    <div class="haze"></div>
+    <svg class="prof" id="profSvg" viewBox="0 0 390 46" preserveAspectRatio="none" aria-hidden="true"></svg>
+    <div class="hair"></div>
+  </div>
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="kicker">Six models · one point</div>
+      <h1 id="placeName">北京 · 西山</h1>
+      <div class="geo" id="placeGeo">39.96°N 116.07°E · 地形 700 m · 格点 330 m</div>
+    </div>
+    <button class="iconbtn" id="refresh" aria-label="更新数据">
+      <svg class="ic" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,48V96a8,8,0,0,1-8,8H168a8,8,0,0,1,0-16h28.69L182.06,73.37a79.56,79.56,0,0,0-56.13-23.43h-.45A79.52,79.52,0,0,0,69.59,72.71,8,8,0,0,1,58.41,61.27a96,96,0,0,1,135,.79L208,76.69V48a8,8,0,0,1,16,0ZM186.41,183.29a80,80,0,0,1-112.47-.66L59.31,168H88a8,8,0,0,0,0-16H40a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V179.31l14.63,14.63A95.43,95.43,0,0,0,130,222.06h.53a95.36,95.36,0,0,0,67.07-27.33,8,8,0,0,0-11.18-11.44Z"/></svg>
+    </button>
+  </div>
+
+  <div id="flow">
+
+    <!-- 结论：六个模型的一致程度 -->
+    <section class="verdict">
+      <div class="lbl">未来 24 小时 · 六模型分歧</div>
+      <div class="big">
+        <b id="spreadNum">±1.8</b><span class="u">℃</span>
+        <div class="win">
+          <div id="spreadRange">1.9 → 12.7 ℃</div>
+          <div id="spreadWhen">极差 10.8 ℃</div>
+          <div id="spreadAt">11/7 14:00</div>
+        </div>
+      </div>
+      <div class="note" id="spreadNote">六个模式对同一山谷的解释不同。分歧 ≥3 ℃ 时，单值预报不能用于决策。</div>
+      <div class="scale">
+        <div class="bar"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+        <div class="mk"><i id="scaleMark" style="left:18%"></i></div>
+        <div class="tags"><span>一致 ≤1℃</span><span>分散 1–3℃</span><span>失控 ≥3℃</span></div>
+      </div>
+    </section>
+
+    <!-- 变量：第一个真实状态切换 -->
+    <div class="seg" role="tablist" aria-label="要素">
+      <button class="on" data-var="temp" role="tab" aria-selected="true">温度<span class="v">°C</span></button>
+      <button data-var="precip" role="tab" aria-selected="false">降水<span class="v">mm/h</span></button>
+      <button data-var="wind" role="tab" aria-selected="false">风速<span class="v">km/h</span></button>
+    </div>
+
+    <!-- 图 -->
+    <section class="chart">
+      <div class="hd">
+        <h2>72 小时叠图</h2>
+        <div class="r" id="chartAxis">Y −2 → 14 ℃</div>
+      </div>
+      <div class="sub" id="chartSub">六条线是六个模式。点下面任意一行，把它提出来。</div>
+      <div class="plot">
+        <svg id="plotSvg" viewBox="0 0 350 186" preserveAspectRatio="none"></svg>
+        <div class="skel" id="plotSkel" hidden></div>
+      </div>
+    </section>
+
+    <!-- 六行模型清单 -->
+    <section class="rows">
+      <div class="cap">模式清单<span class="r" id="rowsMeta">6 个 · 全球</span></div>
+      <div id="modelRows"></div>
+    </section>
+
+    <!-- 高程修正 -->
+    <section class="elev">
+      <div class="hd"><h2>你站的地方，模式看不见</h2><div class="r">elevation</div></div>
+      <div class="pair">
+        <div class="col">
+          <div class="k">模式格点</div>
+          <div class="n" id="elevGrid">330<small>m</small></div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="col">
+          <div class="k">你的海拔</div>
+          <div class="n" id="elevUser">700<small>m</small></div>
+        </div>
+      </div>
+      <div class="d" id="elevNote">
+        直读 <b id="rawT">3.2 ℃</b>，按你所在高度修正后约 <b id="fixT">0.8 ℃</b>。
+        <span class="warn" id="elevWarn">差 370 m，直读会暖 2.4 ℃。</span>
+      </div>
+      <div class="d" style="border-top:0;padding-top:8px;margin-top:6px;color:rgba(241,238,230,.55)">
+        按 6.5 ℃/km 气温递减率估算。逆温层、云底以下、背风焚风时不成立 —— 这是量级校正，不是精确订正。
+      </div>
+    </section>
+
+    <div class="foot">
+      <div class="l"><span>ECMWF</span><span>NOAA</span><span>DWD</span><span>CMA</span><span>ECCC</span><span>JMA</span></div>
+      <div>数据 © Open-Meteo · CC BY 4.0 · 非商用免费接口</div>
+      <div id="footTime">更新 19:12 · 快照 2026-11-06</div>
+      <div>预报不是承诺：山区局地差异常大于模式格距。</div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <button class="go" id="btnPlace">
+      <svg class="ic" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      更换地点
+    </button>
+    <button class="alt" id="btnElev">海拔</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="scrim" id="scrim"></div>
+
+  <!-- 弹层一：找地点 -->
+  <div class="modal" id="mPlace">
+    <div class="grab"></div>
+    <h3>换一个山谷</h3>
+    <p class="hint">搜中文地名，或用下面的常去地点。</p>
+    <div class="field">
+      <svg class="ic" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <input id="q" placeholder="门头沟 / 百花山 / 灵山" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div id="favBox" hidden></div>
+    <div class="chips" id="chips">
+      <button data-q="门头沟">门头沟</button>
+      <button data-q="百花山">百花山</button>
+      <button data-q="灵山">灵山</button>
+      <button data-q="香山">香山</button>
+      <button data-q="延庆">延庆</button>
+    </div>
+    <div class="res" id="resBox"></div>
+  </div>
+
+  <!-- 弹层二：我的海拔 -->
+  <div class="modal" id="mElev">
+    <div class="grab"></div>
+    <h3>你所在的海拔</h3>
+    <p class="hint">模式只算到格点平均高度。填你实际站的高度，温度才不会被算暖。</p>
+    <div class="numrow">
+      <div class="field"><input id="elevInput" type="number" inputmode="numeric" step="10" placeholder="700"></div>
+      <span class="unit">米</span>
+    </div>
+    <div class="saveline">
+      <button id="saveElev">用这个高度重算</button>
+      <div class="note">不知道具体高度时：山谷底按 300–500 m，山腰 800–1200 m，山脊 1500 m 以上。留空则用 DEM 自动值。</div>
+    </div>
+  </div>
+</div></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   数据：Open-Meteo 公开接口，六个全球模式，同一坐标一次取回。
+   字段名是 {变量}_{模式}，这是接口的真实形状（已实测）。
+   SEED 是 2026-11-06 19:12 抓到的真实快照 —— 首屏立即可读，
+   联网后由同结构的新数据替换，断网也能用。
+   ══════════════════════════════════════════════════════════════════ */
+const SEED = {"elevation":330,"utc_offset_seconds":28800,"timezone":"Asia/Shanghai","hourly":{"time":["2026-11-06T00:00","2026-11-06T01:00","2026-11-06T02:00","2026-11-06T03:00","2026-11-06T04:00","2026-11-06T05:00","2026-11-06T06:00","2026-11-06T07:00","2026-11-06T08:00","2026-11-06T09:00","2026-11-06T10:00","2026-11-06T11:00","2026-11-06T12:00","2026-11-06T13:00","2026-11-06T14:00","2026-11-06T15:00","2026-11-06T16:00","2026-11-06T17:00","2026-11-06T18:00","2026-11-06T19:00","2026-11-06T20:00","2026-11-06T21:00","2026-11-06T22:00","2026-11-06T23:00","2026-11-07T00:00","2026-11-07T01:00","2026-11-07T02:00","2026-11-07T03:00","2026-11-07T04:00","2026-11-07T05:00","2026-11-07T06:00","2026-11-07T07:00","2026-11-07T08:00","2026-11-07T09:00","2026-11-07T10:00","2026-11-07T11:00","2026-11-07T12:00","2026-11-07T13:00","2026-11-07T14:00","2026-11-07T15:00","2026-11-07T16:00","2026-11-07T17:00","2026-11-07T18:00","2026-11-07T19:00","2026-11-07T20:00","2026-11-07T21:00","2026-11-07T22:00","2026-11-07T23:00","2026-11-08T00:00","2026-11-08T01:00","2026-11-08T02:00","2026-11-08T03:00","2026-11-08T04:00","2026-11-08T05:00","2026-11-08T06:00","2026-11-08T07:00","2026-11-08T08:00","2026-11-08T09:00","2026-11-08T10:00","2026-11-08T11:00","2026-11-08T12:00","2026-11-08T13:00","2026-11-08T14:00","2026-11-08T15:00","2026-11-08T16:00","2026-11-08T17:00","2026-11-08T18:00","2026-11-08T19:00","2026-11-08T20:00","2026-11-08T21:00","2026-11-08T22:00","2026-11-08T23:00"],"temperature_2m_ecmwf_ifs025":[0.5,-0.7,-1.6,-2.0,-2.1,-1.7,-0.8,0.5,2.1,4.5,7.2,9.3,10.5,11.1,11.0,10.0,8.4,6.7,5.2,3.7,2.5,1.5,0.8,0.5,0.7,1.3,1.7,1.5,1.1,1.0,1.2,1.6,2.0,2.5,2.9,3.3,3.5,3.5,3.3,2.7,1.9,1.3,1.0,0.9,0.8,0.8,0.8,0.9,0.9,0.9,0.9,1.0,1.2,1.3,1.3,1.2,1.2,1.4,1.6,2.1,3.0,4.2,4.5,3.5,1.8,0.1,-1.4,-2.9,-3.9,-4.0,-3.6,-3.3],"temperature_2m_gfs_seamless":[5.7,5.4,5.0,4.6,4.1,3.8,3.5,3.4,5.3,7.5,8.5,9.2,9.9,10.5,10.8,10.9,10.5,8.2,7.1,6.5,6.2,5.8,5.5,5.3,5.2,4.3,4.0,3.4,3.1,2.7,2.7,2.6,3.8,4.8,5.4,5.9,6.2,6.0,5.3,4.2,2.8,3.0,2.9,2.6,2.3,2.0,2.1,2.0,2.0,2.1,2.2,2.2,2.3,2.3,2.4,2.4,2.7,3.3,3.6,4.0,4.8,5.8,6.1,6.2,5.8,4.1,3.2,2.7,2.1,1.6,1.1,0.6],"temperature_2m_icon_seamless":[1.2,0.6,-0.1,-0.2,-0.3,-0.2,-0.1,0.1,1.8,6.6,9.1,10.0,10.6,11.1,12.5,12.3,11.8,9.9,7.5,5.5,3.2,2.1,1.4,1.4,1.3,0.7,0.6,1.9,1.7,1.0,1.8,2.0,2.3,2.5,2.9,3.2,3.0,2.4,1.6,1.2,0.8,0.7,0.0,-0.1,-0.2,-0.1,-0.1,0.6,1.1,1.4,1.6,1.4,1.6,1.7,1.6,1.4,1.4,1.6,2.2,3.3,4.6,5.2,5.7,5.8,6.1,5.4,4.2,2.8,2.3,1.7,2.2,1.5],"temperature_2m_cma_grapes_global":[3.2,2.1,1.2,0.6,0.2,0.2,0.8,1.8,3.1,5.1,7.5,9.3,10.4,10.9,10.8,9.9,8.4,7.0,6.1,5.3,4.6,3.9,3.3,2.7,2.3,1.9,1.5,1.0,0.4,0.2,0.3,0.8,1.4,2.1,3.0,3.7,4.1,4.3,4.2,3.8,3.1,2.4,1.8,1.3,0.8,0.5,0.3,0.3,0.4,0.7,0.9,1.1,1.2,1.4,1.4,1.5,1.6,2.0,2.4,3.0,4.0,5.1,5.7,5.2,4.3,3.4,2.8,2.3,2.0,2.0,2.3,2.3],"temperature_2m_gem_seamless":[1.8,0.6,-0.0,-0.4,-0.4,-0.6,-0.8,-1.1,2.6,5.1,8.7,10.7,11.6,12.1,12.3,12.2,11.5,8.9,5.8,3.9,2.9,2.0,1.1,0.4,-0.1,-0.5,-0.7,-1.2,-1.8,-2.1,-2.0,-1.3,0.6,3.1,2.9,1.6,1.1,1.1,1.3,1.4,1.3,1.0,0.7,0.6,0.4,0.3,0.3,0.2,0.2,0.2,0.2,0.1,0.2,-0.0,-0.2,-0.3,0.0,0.9,1.8,2.5,3.1,3.6,3.9,4.1,3.4,1.3,-0.1,-1.2,-1.8,-2.2,-2.8,-3.5],"temperature_2m_jma_seamless":[5.0,4.4,4.0,3.5,3.0,2.6,2.3,2.3,2.8,3.9,5.6,7.7,9.6,11.1,11.9,11.7,10.8,9.4,7.9,6.5,5.4,4.7,4.0,3.4,2.9,2.5,2.3,2.1,2.1,2.2,2.4,2.8,3.2,4.0,5.0,6.2,7.3,8.1,8.4,8.2,7.5,6.5,5.4,4.5,3.8,3.4,3.2,3.1,3.0,3.0,2.9,2.9,2.8,2.8,2.8,2.9,3.0,3.3,3.8,4.4,4.9,5.3,5.4,5.3,5.1,4.7,4.2,3.8,3.5,3.2,3.0,2.8],"precipitation_ecmwf_ifs025":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.4,0.4,0.4,2.2,2.2,2.2,2.2,2.2,2.2,0.9,0.9,0.9,0.2,0.2,0.2,0.0,0.0,0.0,0.2,0.2,0.2,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"precipitation_gfs_seamless":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.4,1.2,1.5,1.4,1.4,1.4,1.1,1.3,1.1,0.7,0.4,0.3,0.0,0.0,0.0,0.0,0.0,0.0,0.1,0.1,0.1,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"precipitation_icon_seamless":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.1,0.3,0.3,0.4,0.4,0.9,1.2,1.9,2.3,2.2,1.9,1.6,1.1,0.9,0.9,0.5,0.2,0.2,0.3,0.5,0.2,0.1,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"precipitation_cma_grapes_global":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.2,0.2,0.2,1.3,1.3,1.3,1.3,1.3,1.3,1.2,1.2,1.2,0.7,0.7,0.7,0.5,0.5,0.5,0.4,0.4,0.4,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"precipitation_gem_seamless":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.2,0.5,1.0,1.2,1.2,1.2,1.3,1.8,2.5,2.9,2.8,2.5,2.0,2.0,1.2,0.5,0.3,0.3,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"precipitation_jma_seamless":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.8,0.8,0.8,0.8,0.8,0.8,0.6,0.6,0.6,0.6,0.6,0.6,0.1,0.1,0.1,0.1,0.1,0.1,0.2,0.2,0.2,0.2,0.2,0.2,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"wind_speed_10m_ecmwf_ifs025":[4.0,4.0,5.0,5.0,6.0,6.0,7.0,8.0,9.0,10.0,13.0,14.0,14.0,12.0,10.0,7.0,3.0,2.0,2.0,3.0,3.0,3.0,2.0,2.0,1.0,1.0,1.0,1.0,2.0,3.0,3.0,4.0,5.0,5.0,5.0,5.0,5.0,5.0,4.0,4.0,5.0,5.0,5.0,5.0,5.0,5.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,5.0,3.0,4.0,3.0,3.0,3.0,5.0,8.0,10.0,10.0,9.0,8.0,8.0,8.0,8.0,9.0,9.0,9.0],"wind_speed_10m_gfs_seamless":[9.0,9.0,6.0,6.0,4.0,4.0,5.0,6.0,5.0,6.0,13.0,16.0,17.0,18.0,16.0,10.0,0.0,4.0,4.0,3.0,5.0,5.0,5.0,2.0,4.0,3.0,3.0,4.0,6.0,4.0,5.0,6.0,5.0,6.0,7.0,7.0,8.0,8.0,8.0,5.0,4.0,4.0,4.0,6.0,6.0,3.0,1.0,2.0,3.0,3.0,3.0,3.0,3.0,4.0,5.0,5.0,4.0,4.0,5.0,6.0,6.0,7.0,8.0,9.0,6.0,5.0,4.0,6.0,7.0,8.0,9.0,9.0],"wind_speed_10m_icon_seamless":[5.0,5.0,5.0,6.0,6.0,6.0,6.0,6.0,5.0,3.0,9.0,13.0,14.0,13.0,6.0,5.0,2.0,6.0,5.0,5.0,5.0,5.0,6.0,5.0,5.0,5.0,4.0,1.0,4.0,2.0,2.0,2.0,2.0,3.0,4.0,5.0,6.0,6.0,5.0,4.0,4.0,4.0,4.0,5.0,4.0,4.0,4.0,5.0,3.0,2.0,0.0,2.0,2.0,2.0,2.0,3.0,3.0,1.0,1.0,2.0,4.0,6.0,6.0,4.0,2.0,1.0,4.0,4.0,6.0,7.0,7.0,6.0],"wind_speed_10m_cma_grapes_global":[10.0,6.0,4.0,2.0,2.0,2.0,2.0,5.0,6.0,5.0,6.0,6.0,4.0,4.0,5.0,7.0,8.0,9.0,8.0,7.0,7.0,5.0,2.0,2.0,4.0,6.0,7.0,6.0,6.0,6.0,6.0,6.0,7.0,8.0,8.0,9.0,10.0,10.0,10.0,10.0,10.0,11.0,12.0,12.0,12.0,11.0,10.0,9.0,8.0,8.0,8.0,7.0,8.0,8.0,7.0,7.0,7.0,8.0,8.0,9.0,10.0,10.0,10.0,9.0,7.0,5.0,2.0,3.0,7.0,11.0,14.0,17.0],"wind_speed_10m_gem_seamless":[4.0,5.0,6.0,6.0,6.0,6.0,6.0,5.0,4.0,3.0,2.0,2.0,2.0,4.0,6.0,6.0,6.0,4.0,2.0,5.0,6.0,6.0,5.0,5.0,6.0,6.0,5.0,4.0,5.0,6.0,6.0,5.0,6.0,5.0,7.0,8.0,9.0,8.0,8.0,8.0,8.0,8.0,7.0,8.0,7.0,7.0,8.0,6.0,6.0,6.0,8.0,8.0,8.0,6.0,6.0,6.0,7.0,7.0,8.0,9.0,9.0,8.0,6.0,4.0,2.0,2.0,5.0,7.0,8.0,8.0,8.0,8.0],"wind_speed_10m_jma_seamless":[5.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,6.0,5.0,4.0,2.0,1.0,2.0,2.0,2.0,1.0,2.0,3.0,5.0,6.0,6.0,7.0,7.0,6.0,6.0,6.0,6.0,5.0,5.0,4.0,4.0,3.0,2.0,2.0,4.0,6.0,8.0,8.0,8.0,7.0,6.0,6.0,5.0,5.0,4.0,5.0,4.0,4.0,4.0,4.0,3.0,3.0,3.0,3.0,3.0,4.0,4.0,6.0,7.0,8.0,9.0,8.0,7.0,6.0,4.0,3.0,4.0,6.0,7.0,7.0,8.0]},"profile":[92,217,300,384,141,330,155,328,622,568,530]};
+
+const MODELS = [
+  {id:'ecmwf_ifs025',     name:'ECMWF IFS', org:'欧洲中期天气预报中心', res:'全球 0.25°', c:'l1', dash:''},
+  {id:'gfs_seamless',     name:'NOAA GFS',  org:'美国国家海洋和大气管理局', res:'全球 0.25°', c:'l2', dash:''},
+  {id:'icon_seamless',    name:'DWD ICON',  org:'德国气象局', res:'全球 11 km', c:'l3', dash:''},
+  {id:'cma_grapes_global',name:'CMA GRAPES',org:'中国气象局', res:'全球 15 km', c:'l4', dash:'6 3'},
+  {id:'gem_seamless',     name:'GEM',       org:'加拿大环境与气候变化部', res:'全球 15 km', c:'l5', dash:'6 3'},
+  {id:'jma_seamless',     name:'JMA GSM',   org:'日本气象厅', res:'全球 11 km', c:'l6', dash:'2 3'}
+];
+const VARS = {
+  temp:  {key:'temperature_2m',  label:'温度', unit:'℃',   dec:1, zero:false},
+  precip:{key:'precipitation',   label:'降水', unit:'mm/h', dec:1, zero:true},
+  wind:  {key:'wind_speed_10m',  label:'风速', unit:'km/h', dec:0, zero:true}
+};
+
+const S = {
+  varKey:'temp',
+  place:{name:'北京 · 西山', lat:39.96, lon:116.07, elev:700},
+  userElev:700,
+  gridElev:330,
+  focus:null,
+  hourly:null,
+  timeArr:[],
+  fromCache:false,
+  stamp:null
+};
+
+const $ = s => document.querySelector(s);
+const fmt = (v,d)=> v==null||Number.isNaN(v) ? '—' : v.toFixed(d);
+
+/* ——— 网络 ——— */
+async function api(url, ms=9000){
+  const ctl = new AbortController();
+  const t = setTimeout(()=>ctl.abort(), ms);
+  try{
+    const r = await fetch(url,{signal:ctl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+function forecastUrl(){
+  const ids = MODELS.map(m=>m.id).join(',');
+  return `https://api.open-meteo.com/v1/forecast?latitude=${S.place.lat}&longitude=${S.place.lon}`
+       + `&hourly=temperature_2m,precipitation,wind_speed_10m&models=${ids}`
+       + `&forecast_days=3&timezone=auto&windspeed_unit=kmh`;
+}
+function elevationUrl(){
+  // 沿经线取 11 个点，画一条真实的地形剖面
+  const lats=[]; for(let i=0;i<11;i++) lats.push((S.place.lat-0.14+i*0.028).toFixed(4));
+  return `https://api.open-meteo.com/v1/elevation?latitude=${lats.join(',')}&longitude=${Array(11).fill(S.place.lon.toFixed(4)).join(',')}`;
+}
+
+/* ——— 取数并落到 S.hourly ——— */
+function absorb(j){
+  if(!j || !j.hourly || !j.hourly.time) return false;
+  S.timeArr = j.hourly.time;
+  S.hourly = j.hourly;
+  S.gridElev = Math.round(j.elevation ?? S.gridElev);
+  S.stamp = new Date();
+  return true;
+}
+
+async function loadData(opts={}){
+  const skel = $('#plotSkel');
+  skel.hidden = false;
+  const btn = $('#refresh'); btn.classList.add('rot');
+  try{
+    const j = await api(forecastUrl(), 12000);
+    if(!absorb(j)) throw new Error('empty');
+    S.fromCache = false;
+    toast('六个模式已更新 · '+j.hourly.time.length+' 小时');
+    paint();
+    return true;
+  }catch(e){
+    if(SEED && !S.hourly){ absorb(SEED); S.fromCache = true; paint();
+      toast('连不上 Open-Meteo，显示 11-06 19:12 的快照'); return false; }
+    if(!S.hourly){ toast('取数失败：'+e.message); }
+    return false;
+  }finally{
+    skel.hidden = true; btn.classList.remove('rot');
+  }
+}
+
+async function loadProfile(){
+  try{
+    const j = await api(elevationUrl(), 8000);
+    const arr = j.elevation || [];
+    if(arr.length<3) return;
+    drawProfile(arr);
+  }catch(e){ /* 剖面失败不影响主数据 */ }
+}
+
+/* ——— 时间轴 & 序列 ——— */
+function seriesFor(modelId, varKey){
+  const k = VARS[varKey].key + '_' + modelId;
+  return (S.hourly && S.hourly[k]) ? S.hourly[k] : [];
+}
+function nowIndex(){
+  const now = new Date();
+  const key = String(now.getHours()).padStart(2,'0');
+  for(let i=0;i<S.timeArr.length;i++){
+    const d = new Date(S.timeArr[i]);
+    if(d.getHours()===now.getHours() && d.getDate()===now.getDate()) return i;
+  }
+  return 0;
+}
+function windowIdx(){
+  // 24 小时窗口：从现在往后 24 格
+  const a = nowIndex();
+  return [a, Math.min(a+24, S.timeArr.length-1)];
+}
+
+/* ——— 分歧计算（只用温度） ——— */
+function divergence(){
+  if(!S.hourly) return {max:0, at:0, lo:0, hi:0, tmax:0, tAt:0};
+  const [a,b] = windowIdx();
+  let maxAt=a, maxSpan=0, loAll=1e9, hiAll=-1e9, tMax=1e9, tMin=-1e9, tAt=a;
+  for(let i=a;i<=b;i++){
+    let lo=1e9, hi=-1e9;
+    MODELS.forEach(m=>{ const v=seriesFor(m.id,'temp')[i]; if(v==null) return;
+      if(v<lo) lo=v; if(v>hi) hi=v; });
+    if(hi<lo) continue;
+    if(hi-lo>maxSpan){ maxSpan=hi-lo; maxAt=i; }
+    if(lo<loAll) loAll=lo;
+    if(hi>hiAll) hiAll=hi;
+    // 当刻中位
+    const vals = MODELS.map(m=>seriesFor(m.id,'temp')[i]).filter(v=>v!=null).sort((x,y)=>x-y);
+    const med = vals.length? vals[Math.floor(vals.length/2)] : null;
+    if(med!=null && Math.abs(med)>Math.abs(tMax)){ tMax=med; tAt=i; }
+  }
+  return {max:maxSpan, at:maxAt, lo:loAll, hi:hiAll, tmax:Math.abs(tMax), tAt};
+}
+
+/* ——— 折线图 ——— */
+const PW=350, PH=168, PL=31, PR=6, PT=10, PB=22;
+function plotX(i,n){ return PL + (PW-PL-PR) * (n<=1?0:i/(n-1)); }
+function plotY(v,lo,hi){ const h=PH-PT-PB; const t=(v-lo)/(hi-lo||1); return PT + h*(1-Math.max(0,Math.min(1,t))); }
+
+function drawChart(){
+  const svg = $('#plotSvg');
+  const vk = S.varKey, cfg = VARS[vk];
+  const [a,b] = windowIdx();
+  const n = Math.max(1, b-a+1);
+
+  // 值域
+  let lo=1e9, hi=-1e9;
+  MODELS.forEach(m=>{ const arr=seriesFor(m.id,vk);
+    for(let i=a;i<=b;i++){ const v=arr[i]; if(v==null) continue; if(v<lo)lo=v; if(v>hi)hi=v; }});
+  if(lo===1e9){ lo=0; hi=1; }
+  if(cfg.zero) lo=0;
+  const span = (hi-lo)||1;
+  lo -= span*0.08; hi += span*0.10;
+  if(cfg.zero) lo = Math.min(0, lo), lo=0;
+
+  const parts=[];
+  // 网格：每 6 小时一条竖线
+  for(let i=a;i<=b;i++){
+    if((new Date(S.timeArr[i]).getHours()%6)!==0) continue;
+    const x=plotX(i-a,n);
+    parts.push(`<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${PH-PB}" stroke="#E7E1D6" stroke-width="1"/>`);
+  }
+  // 日界
+  let lastDay=-1;
+  for(let i=a;i<=b;i++){
+    const d=new Date(S.timeArr[i]);
+    if(d.getHours()===0){
+      const x=plotX(i-a,n);
+      parts.push(`<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${PH-PB}" stroke="#CFC7B7" stroke-width="1" stroke-dasharray="2 2"/>`);
+      parts.push(`<text x="${x+3}" y="${PH-PB+14}" font-family="ui-monospace,monospace" font-size="8.5" fill="#9B978D">${d.getMonth()+1}/${d.getDate()}</text>`);
+    }
+  }
+  // 横向刻度
+  const ticks=4;
+  for(let t=0;t<=ticks;t++){
+    const v=lo+(hi-lo)*t/ticks, y=plotY(v,lo,hi);
+    parts.push(`<line x1="${PL}" y1="${y.toFixed(1)}" x2="${PW-PR}" y2="${y.toFixed(1)}" stroke="#EFEAE0" stroke-width="1"/>`);
+    parts.push(`<text x="${PL-5}" y="${(y+3).toFixed(1)}" text-anchor="end" font-family="ui-monospace,monospace" font-size="8.8" fill="#9B978D">${(hi-lo)>6?v.toFixed(0):v.toFixed(1)}</text>`);
+  }
+  // 现在
+  const ni = nowIndex()-a;
+  if(ni>=0 && ni<n){
+    const x=plotX(ni,n);
+    parts.push(`<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${PH-PB}" stroke="#B5502F" stroke-width="1" opacity=".55" stroke-dasharray="3 3"/>`);
+    parts.push(`<circle cx="${x.toFixed(1)}" cy="${PT}" r="2.2" fill="#B5502F" opacity=".8"/>`);
+    parts.push(`<text x="${(x+4).toFixed(1)}" y="${(PT+18)}" font-family="ui-monospace,monospace" font-size="7.6" fill="#B5502F" opacity=".9">现在</text>`);
+  }
+  // 六条线
+  MODELS.forEach(m=>{
+    const arr=seriesFor(m.id,vk);
+    let d='', started=false;
+    for(let i=a;i<=b;i++){
+      const v=arr[i]; if(v==null){ started=false; continue; }
+      const x=plotX(i-a,n), y=plotY(v,lo,hi);
+      d += (started?'L':'M') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+      started=true;
+    }
+    if(!d.trim()) return;
+    const on = S.focus===m.id;
+    const dim = S.focus && !on;
+    parts.push(`<path d="${d}" fill="none"
+      stroke="${on?'#B5502F':'var(--'+m.c+')'}"
+      stroke-width="${on?2.6:1.55}"
+      ${m.dash?`stroke-dasharray="${m.dash}"`:''}
+      opacity="${on?1:(dim?.3:.9)}" stroke-linejoin="round"/>`);
+  });
+
+  parts.push(`<text x="${PW-PR}" y="${PH-4}" text-anchor="end" font-family="ui-monospace,monospace" font-size="7.6" fill="#9B978D">+24 h</text>`);
+  svg.setAttribute('viewBox',`0 0 ${PW} ${PH}`);
+  svg.innerHTML = parts.join('');
+  $('#chartAxis').textContent = `纵轴 ${lo.toFixed(0)} → ${hi.toFixed(0)} ${cfg.unit}`;
+  let sub;
+  if(S.focus){ sub = `已提出 ${MODELS.find(m=>m.id===S.focus).name} · 其余五条压到 42%`; }
+  else if(vk==='precip' && hi<0.12){ sub = '六个模式在三天内都没报出降水 —— 空着也是结论。'; }
+  else if(vk==='wind' && hi<3){ sub = '三天都是静风，六个模式在这点上几乎不争。'; }
+  else { sub = '六条线是六个模式。点下面任意一行，把它提出来。'; }
+  $('#chartSub').textContent = sub;
+}
+
+/* ——— 模型行 + 迷你曲线 ——— */
+function sparkline(modelId){
+  const vk=S.varKey, arr=seriesFor(modelId,vk), [a,b]=windowIdx();
+  let lo=1e9,hi=-1e9;
+  for(let i=a;i<=b;i++){const v=arr[i]; if(v==null)continue; if(v<lo)lo=v; if(v>hi)hi=v;}
+  if(lo===1e9) return '';
+  const w=52,h=20, n=Math.max(1,b-a+1);
+  let d='', started=false;
+  for(let i=a;i<=b;i++){
+    const v=arr[i]; if(v==null){started=false;continue;}
+    const x=(i-a)/(n-1)*w, y=h-2-((v-lo)/((hi-lo)||1))*(h-4);
+    d+=(started?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' '; started=true;
+  }
+  const m=MODELS.find(x=>x.id===modelId);
+  const on = S.focus===modelId;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="${on?'#B5502F':'var(--'+m.c+')'}" stroke-width="${on?2.1:1.45}" ${m.dash?`stroke-dasharray="${m.dash}"`:''}/></svg>`;
+}
+
+function renderRows(){
+  const vk=S.varKey, cfg=VARS[vk], ni=nowIndex();
+  const vals = MODELS.map(m=>seriesFor(m.id,vk)[ni]).filter(v=>v!=null).sort((a,b)=>a-b);
+  const med = vals.length? vals[Math.floor(vals.length/2)] : null;
+  const html = MODELS.map(m=>{
+    const v = seriesFor(m.id,vk)[ni];
+    const d = (v!=null && med!=null) ? v-med : null;
+    const sign = d==null?'':(d>0?'+':'')+fmt(d,1);
+    return `<button class="row ${S.focus===m.id?'on':''}" data-model="${m.id}">
+      <span class="spark">${sparkline(m.id)}</span>
+      <span class="nm"><b>${m.name}</b><span>${m.org} · ${m.res}</span></span>
+      <span class="val">${fmt(v,cfg.dec)}<em>${cfg.unit}${(d!=null && Math.abs(d)>=0.05)?' · '+sign:''}</em></span>
+    </button>`;
+  }).join('');
+  $('#modelRows').innerHTML = html;
+  $('#rowsMeta').textContent = `6 个 · ${VARS[vk].label} · ${S.timeArr.length?new Date(S.timeArr[ni]).getHours()+':00':'—'}`;
+}
+
+/* ——— 结论 / 高程 ——— */
+function renderVerdict(){
+  if(!S.hourly) return;
+  const dv = divergence(), ni = nowIndex();
+  $('#spreadNum').textContent = '±' + fmt(dv.max/2,1);
+  $('#spreadRange').textContent = `${fmt(dv.lo,1)} → ${fmt(dv.hi,1)} ℃`;
+  $('#spreadWhen').textContent = `极差 ${fmt(dv.max,1)} ℃`;
+  const wd = dv.at!==undefined && S.timeArr[dv.at] ? new Date(S.timeArr[dv.at]) : null;
+  $('#spreadAt').textContent = wd ? `${wd.getMonth()+1}/${wd.getDate()} ${String(wd.getHours()).padStart(2,'0')}:00` : '';
+  const half = dv.max/2;
+  const pct = Math.min(96, Math.max(6, half/3*100));
+  $('#scaleMark').style.left = pct+'%';
+  $('#spreadNote').textContent = half>=1.5
+    ? '六个模式各说各的，山区今天别按单值决策。'
+    : '六个模式大体同向，仍要留 1–2 ℃ 给沟底的冷池。';
+}
+function renderElev(){
+  const cfg=VARS.temp, ni=nowIndex();
+  const vals = MODELS.map(m=>seriesFor(m.id,'temp')[ni]).filter(v=>v!=null).sort((a,b)=>a-b);
+  const med = vals.length? vals[Math.floor(vals.length/2)] : null;
+  const dT = (S.userElev - S.gridElev) * 0.0065;
+  $('#elevGrid').innerHTML = `${S.gridElev}<small>m</small>`;
+  $('#elevUser').innerHTML = `${Number(S.userElev).toLocaleString('en-US')}<small>m</small>`;
+  $('#rawT').textContent = med!=null ? fmt(med,1)+' ℃' : '—';
+  $('#fixT').textContent = med!=null ? fmt(med-dT,1)+' ℃' : '—';
+  const warn = $('#elevWarn');
+  if(Math.abs(dT)>=0.8){
+    warn.textContent = `差 ${Math.round(Math.abs(S.userElev-S.gridElev))} m，直读会${dT>0?'暖':'冷'} ${Math.abs(dT).toFixed(1)} ℃。`;
+  } else { warn.textContent='格点与你的高度接近，无需修正。'; }
+}
+
+/* ——— 剖面 ——— */
+function drawProfile(arr){
+  const svg=$('#profSvg'), W=390, H=46;
+  const lo=Math.min(...arr), hi=Math.max(...arr), span=(hi-lo)||1;
+  const pts = arr.map((v,i)=>{
+    const x = i/(arr.length-1)*W;
+    const y = H - ((v-lo)/span)*(H-10) - 4;
+    return [x,y];
+  });
+  // 用二次曲线穿过相邻中点，地形才不会是一段一段的折线
+  let d = 'M'+pts[0][0].toFixed(1)+' '+pts[0][1].toFixed(1);
+  for(let i=1;i<pts.length-1;i++){
+    const mx=(pts[i][0]+pts[i+1][0])/2, my=(pts[i][1]+pts[i+1][1])/2;
+    d += ' Q'+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1)+' '+mx.toFixed(1)+' '+my.toFixed(1);
+  }
+  d += ' L'+pts[pts.length-1][0].toFixed(1)+' '+pts[pts.length-1][1].toFixed(1);
+  const fill = d + ' L'+W+' '+H+' L0 '+H+' Z';
+  const cur = pts[Math.floor(pts.length/2)];
+  svg.innerHTML = `
+    <defs><linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="rgba(244,242,237,.30)"/>
+      <stop offset="1" stop-color="rgba(244,242,237,.04)"/>
+    </linearGradient></defs>
+    <path d="${fill}" fill="url(#rg)"/>
+    <path d="${d}" fill="none" stroke="rgba(244,242,237,.88)" stroke-width="1.5"/>
+    <circle cx="${cur[0].toFixed(1)}" cy="${cur[1].toFixed(1)}" r="2.8" fill="#B5502F"
+      stroke="rgba(244,242,237,.5)" stroke-width="1"/>
+    `;
+}
+
+/* ——— 主渲染 ——— */
+function paint(){
+  $('#placeName').textContent = S.place.name;
+  $('#placeGeo').textContent =
+    `${Math.abs(S.place.lat).toFixed(2)}°${S.place.lat>=0?'N':'S'} ${Math.abs(S.place.lon).toFixed(2)}°${S.place.lon>=0?'E':'W'} · 地形 ${Math.round(S.place.elev)} m · 格点 ${S.gridElev} m`;
+  drawChart(); renderRows(); renderVerdict(); renderElev();
+  const t = S.stamp || new Date();
+  $('#footTime').textContent = `更新 ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')} · ${S.fromCache?'离线快照':'实时接口'}`;
+}
+
+/* ——— 交互 ——— */
+let toastT;
+function toast(m){ const el=$('#toast'); el.textContent=m; el.classList.add('on');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('on'),1800); }
+
+document.querySelectorAll('.seg button').forEach(b=>{
+  b.onclick = () => setVar(b.dataset.var);
+});
+function setVar(v){
+  S.varKey = v;
+  document.querySelectorAll('.seg button').forEach(x=>{
+    const on = x.dataset.var===v;
+    x.classList.toggle('on',on); x.setAttribute('aria-selected',String(on));
+  });
+  S.focus = null;
+  drawChart(); renderRows();
+}
+
+$('#modelRows').addEventListener('click', e=>{
+  const row = e.target.closest('[data-model]'); if(!row) return;
+  const id = row.dataset.model;
+  S.focus = (S.focus===id) ? null : id;
+  drawChart(); renderRows();
+  toast(S.focus ? `已提出 ${MODELS.find(m=>m.id===id).name}` : '已恢复六条叠图');
+});
+
+/* 弹层 */
+const scrim=$('#scrim'), mPlace=$('#mPlace'), mElev=$('#mElev');
+function openModal(which){
+  const on = !!which;
+  scrim.classList.toggle('on',on);
+  mPlace.classList.toggle('on', which==='place');
+  mElev.classList.toggle('on', which==='elev');
+  if(which==='elev') $('#elevInput').value = S.userElev;
+}
+scrim.onclick = ()=>openModal(null);
+$('#btnPlace').onclick = ()=>{ renderFavs(); openModal('place'); };
+$('#btnElev').onclick = ()=>openModal('elev');
+
+/* ── 收藏：存在本机，换地点时不必再搜一遍 ── */
+const FKEY='jx_favs';
+function favs(){ try{ return JSON.parse(localStorage.getItem(FKEY)||'[]'); }catch(e){ return []; } }
+function saveFavs(a){ try{ localStorage.setItem(FKEY, JSON.stringify(a)); }catch(e){} }
+function isFav(lat,lon){
+  return favs().some(x=>Math.abs(x.lat-lat)<1e-6 && Math.abs(x.lon-lon)<1e-6);
+}
+function renderFavs(){
+  const box=$('#favBox'); const a=favs();
+  if(!a.length){ box.hidden=true; box.innerHTML=''; return; }
+  box.hidden=false;
+  box.innerHTML = '<span class="favlab">已收藏</span><div class="chips">' +
+    a.map((p,i)=>`<button data-fav-i="${i}">${p.name}<i data-del="${i}">✕</i></button>`).join('') +
+    '</div>';
+}
+function toggleFav(p){
+  const a=favs();
+  const i=a.findIndex(x=>Math.abs(x.lat-p.lat)<1e-6 && Math.abs(x.lon-p.lon)<1e-6);
+  if(i>=0){ a.splice(i,1); saveFavs(a); renderFavs(); return false; }
+  a.unshift({name:p.name, lat:p.lat, lon:p.lon, elev:p.elev});
+  a.splice(8);                       // 最多留八个，别把弹层撑满
+  saveFavs(a); renderFavs(); return true;
+}
+
+/* 换地点只有这一条实现，搜索结果与收藏 chip 都走它 */
+async function goPlace(p){
+  const prev = S.place;
+  S.place = {name:p.name, lat:p.lat, lon:p.lon, elev:(p.elev!=null?p.elev:500)};
+  S.userElev = S.place.elev;
+  S.focus = null;
+  openModal(null);
+  toast(`正在向六个模式取 ${p.name} 的数据…`);
+  const ok = await loadData();
+  if(!ok){ S.place = prev; paint(); toast('这个点没取到数据，仍显示上一个地点'); return false; }
+  loadProfile();
+  try{ localStorage.setItem('jx_last', JSON.stringify(S.place)); }catch(e){}
+  toast(`已切到 ${p.name} · ${Math.round(S.place.elev)} m，可在「海拔」里改`);
+  return true;
+}
+
+/* 搜索：Enter 是第二条通路，和点击走同一个函数 */
+const q=$('#q'), resBox=$('#resBox');
+async function search(name){
+  if(!name.trim()) return;
+  resBox.innerHTML = `<div class="empty">搜索中…</div>`;
+  try{
+    const j = await api(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=6&language=zh&format=json`, 8000);
+    const rs = j.results||[];
+    if(!rs.length){ resBox.innerHTML = `<div class="empty">没有找到「${name}」。试试更完整的写法：门头沟、百花山。</div>`; return; }
+    resBox.innerHTML = rs.map((r,i)=>{
+      const fav = isFav(r.latitude, r.longitude);
+      return `<button data-i="${i}">
+      <span class="nm"><b>${r.name}</b><span>${[r.admin1,r.country].filter(Boolean).join(' · ')}</span></span>
+      <span class="el">${r.elevation!=null?Math.round(r.elevation)+' m':'—'}</span>
+      <span class="star" data-star="${i}">${fav?'★':'☆'}</span>
+    </button>`;
+    }).join('');
+    resBox.dataset.data = JSON.stringify(rs);
+  }catch(e){ resBox.innerHTML = `<div class="empty">搜索失败：${e.message}</div>`; }
+}
+q.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); search(q.value); } });
+$('#chips').addEventListener('click', e=>{
+  const b=e.target.closest('[data-q]'); if(!b) return;
+  q.value=b.dataset.q; search(b.dataset.q);
+});
+resBox.addEventListener('click', async e=>{
+  const rs=JSON.parse(resBox.dataset.data||'[]');
+  const star=e.target.closest('[data-star]');
+  if(star){                                   // 只收藏，不切点
+    const r=rs[+star.dataset.star]; if(!r) return;
+    const added = toggleFav({name:r.name+(r.admin1?' · '+r.admin1:''),
+      lat:r.latitude, lon:r.longitude, elev:r.elevation!=null?Math.round(r.elevation):500});
+    star.textContent = added?'★':'☆';
+    toast(added?`已收藏 ${r.name}`:`已取消收藏 ${r.name}`);
+    return;
+  }
+  const b=e.target.closest('[data-i]'); if(!b) return;
+  const r=rs[+b.dataset.i]; if(!r) return;
+  goPlace({name:r.name+(r.admin1?' · '+r.admin1:''), lat:r.latitude, lon:r.longitude,
+           elev:r.elevation!=null?Math.round(r.elevation):500});
+});
+
+$('#favBox').addEventListener('click', async e=>{
+  const del=e.target.closest('[data-del]');
+  if(del){ e.stopPropagation(); const a=favs(); a.splice(+del.dataset.del,1); saveFavs(a); renderFavs(); return; }
+  const b=e.target.closest('[data-fav-i]'); if(!b) return;
+  const a=favs(); const p=a[+b.dataset.favI]; if(p) goPlace(p);
+});
+
+/* 海拔 */
+$('#saveElev').onclick = ()=>{
+  const v = parseInt($('#elevInput').value,10);
+  if(Number.isFinite(v) && v>-100 && v<9000){ S.userElev=v; paint(); openModal(null);
+    toast(`按 ${v} m 重算完成`); }
+  else toast('海拔要填一个数字（米）');
+};
+
+/* 刷新：四个状态都在按钮上 */
+$('#refresh').onclick = async ()=>{
+  const b=$('#refresh'); if(b.classList.contains('rot')) return;
+  toast('正在向六个模式取数…');
+  await loadData(); await loadProfile();
+};
+
+/* ——— 真实界面状态声明（截图器只枚举这里，不猜按钮） ——— */
+window.__UI_CAPTURE__ = {
+  reset: async ()=>{ openModal(null); setVar('temp'); S.focus=null; drawChart(); renderRows(); },
+  states: [
+    {id:'home', label:'首页 · 六模型叠图'},
+    {id:'precip', label:'切到降水', go: async()=>setVar('precip')},
+    {id:'wind', label:'切到风速', go: async()=>setVar('wind')},
+    {id:'focus', label:'提出 ECMWF', go: async()=>{
+        S.focus='ecmwf_ifs025'; drawChart(); renderRows(); }},
+    {id:'place', label:'找地点弹层', go: async()=>{ openModal('place'); }},
+    {id:'elev', label:'海拔弹层', go: async()=>{ openModal('elev'); }}
+  ]
+};
+
+/* ——— 启动 ——— */
+(function boot(){
+  const d=new Date();
+  $('#clock').textContent = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  if(SEED){ absorb(SEED); S.fromCache=true; paint();
+    if(SEED.profile && SEED.profile.length>2) drawProfile(SEED.profile); }
+  else { $('#plotSkel').hidden=false; }
+  // 离线壳：接口断了也还能打开，用内嵌快照顶住
+  if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost' || location.hostname==='127.0.0.1')){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+  // 上次看的地点：接上，免得每次打开都要重新点一次收藏
+  const seedPlace = S.place ? Object.assign({}, S.place) : null;
+  let last=null;
+  try{ last = JSON.parse(localStorage.getItem('jx_last')||'null'); }catch(e){}
+  if(last && last.lat!=null){ S.place = last; S.userElev = last.elev; }
+  loadData().then(ok=>{
+    if(!ok && seedPlace && last){ S.place = seedPlace; paint(); }   // 取不到就退回快照的地点
+    loadProfile();
+  });
+})();
+</script>
+</body>
+</html>
