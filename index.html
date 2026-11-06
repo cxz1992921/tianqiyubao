@@ -305,6 +305,17 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
   transition:opacity .26s var(--ease),transform .26s var(--ease)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 
+.winseg{display:flex;gap:6px;justify-content:flex-end;margin:2px 0 10px}
+.winseg button{border:1px solid rgba(30,46,51,.18);background:transparent;color:inherit;
+  font-family:inherit;font-size:11px;letter-spacing:.04em;padding:7px 11px;cursor:pointer;
+  border-radius:var(--r-pill);opacity:.6;
+  transition:opacity .2s var(--ease),background .2s var(--ease),border-color .2s var(--ease)}
+.winseg button.on{opacity:1;background:rgba(181,80,47,.10);
+  border-color:rgba(181,80,47,.46);color:#B5502F}
+.acc{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;opacity:.74;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;letter-spacing:.02em}
+.acc b{color:#B5502F;font-weight:600}
+
 @media(prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
   .skel{background:#EFEBE2}
@@ -342,7 +353,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
 
     <!-- 结论：六个模型的一致程度 -->
     <section class="verdict">
-      <div class="lbl">未来 24 小时 · 六模型分歧</div>
+      <div class="lbl" id="lblSpread">未来 24 小时 · 六模型分歧</div>
       <div class="big">
         <b id="spreadNum">±1.8</b><span class="u">℃</span>
         <div class="win">
@@ -352,6 +363,9 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
         </div>
       </div>
       <div class="note" id="spreadNote">六个模式对同一山谷的解释不同。分歧 ≥3 ℃ 时，单值预报不能用于决策。</div>
+      <div class="acc" id="accRow">
+        <span id="acc24">24h 累计 —</span><span id="acc72">72h 累计 —</span><span id="accProb">概率 —</span>
+      </div>
       <div class="scale">
         <div class="bar"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
         <div class="mk"><i id="scaleMark" style="left:18%"></i></div>
@@ -364,12 +378,18 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
       <button class="on" data-var="temp" role="tab" aria-selected="true">温度<span class="v">°C</span></button>
       <button data-var="precip" role="tab" aria-selected="false">降水<span class="v">mm/h</span></button>
       <button data-var="wind" role="tab" aria-selected="false">风速<span class="v">km/h</span></button>
+      <button data-var="accum" role="tab" aria-selected="false">累积<span class="v">mm</span></button>
+    </div>
+    <div class="winseg" id="winSeg" role="tablist" aria-label="预报窗口">
+      <button class="on" data-win="24" role="tab" aria-selected="true">24 小时</button>
+      <button data-win="72" role="tab" aria-selected="false">3 天</button>
+      <button data-win="240" role="tab" aria-selected="false">10 天</button>
     </div>
 
     <!-- 图 -->
     <section class="chart">
       <div class="hd">
-        <h2>72 小时叠图</h2>
+        <h2 id="chartTitle">未来 24 小时叠图</h2>
         <div class="r" id="chartAxis">Y −2 → 14 ℃</div>
       </div>
       <div class="sub" id="chartSub">六条线是六个模式。点下面任意一行，把它提出来。</div>
@@ -484,7 +504,9 @@ const MODELS = [
 const VARS = {
   temp:  {key:'temperature_2m',  label:'温度', unit:'℃',   dec:1, zero:false},
   precip:{key:'precipitation',   label:'降水', unit:'mm/h', dec:1, zero:true},
-  wind:  {key:'wind_speed_10m',  label:'风速', unit:'km/h', dec:0, zero:true}
+  wind:  {key:'wind_speed_10m',  label:'风速', unit:'km/h', dec:0, zero:true},
+  /* 累积降水不是接口字段，是 precipitation 沿窗口逐小时累加出来的视图 */
+  accum: {key:'precipitation',   label:'累积降水', unit:'mm', dec:1, zero:true, accum:true}
 };
 
 const S = {
@@ -496,6 +518,7 @@ const S = {
   hourly:null,
   timeArr:[],
   fromCache:false,
+  win:24,          /* 预报窗口（小时）：24 / 72 / 240 */
   stamp:null
 };
 
@@ -516,8 +539,8 @@ async function api(url, ms=9000){
 function forecastUrl(){
   const ids = MODELS.map(m=>m.id).join(',');
   return `https://api.open-meteo.com/v1/forecast?latitude=${S.place.lat}&longitude=${S.place.lon}`
-       + `&hourly=temperature_2m,precipitation,wind_speed_10m&models=${ids}`
-       + `&forecast_days=3&timezone=auto&windspeed_unit=kmh`;
+       + `&hourly=temperature_2m,precipitation,precipitation_probability,wind_speed_10m&models=${ids}`
+       + `&forecast_days=10&timezone=auto&windspeed_unit=kmh`;
 }
 function elevationUrl(){
   // 沿经线取 11 个点，画一条真实的地形剖面
@@ -567,8 +590,21 @@ async function loadProfile(){
 
 /* ——— 时间轴 & 序列 ——— */
 function seriesFor(modelId, varKey){
-  const k = VARS[varKey].key + '_' + modelId;
-  return (S.hourly && S.hourly[k]) ? S.hourly[k] : [];
+  const cfg = VARS[varKey];
+  const k = cfg.key + '_' + modelId;
+  const raw = (S.hourly && S.hourly[k]) ? S.hourly[k] : [];
+  if(!cfg.accum || !raw.length) return raw;
+  /* 累积：窗口起点之前留空，窗口内逐小时把 mm/h 加起来 */
+  const a = nowIndex();
+  const out = [];
+  let sum = 0;
+  for(let i=0;i<raw.length;i++){
+    if(i<a){ out[i] = null; continue; }
+    const v = raw[i];
+    if(v==null){ out[i] = sum; continue; }
+    sum += v; out[i] = sum;
+  }
+  return out;
 }
 function nowIndex(){
   const now = new Date();
@@ -580,9 +616,9 @@ function nowIndex(){
   return 0;
 }
 function windowIdx(){
-  // 24 小时窗口：从现在往后 24 格
+  // 窗口长度由 S.win 决定：24 / 72 / 240 格
   const a = nowIndex();
-  return [a, Math.min(a+24, S.timeArr.length-1)];
+  return [a, Math.min(a + (S.win || 24), S.timeArr.length-1)];
 }
 
 /* ——— 分歧计算（只用温度） ——— */
@@ -614,6 +650,8 @@ function plotY(v,lo,hi){ const h=PH-PT-PB; const t=(v-lo)/(hi-lo||1); return PT 
 function drawChart(){
   const svg = $('#plotSvg');
   const vk = S.varKey, cfg = VARS[vk];
+  const winLabel = S.win===240 ? '未来 10 天' : (S.win===72 ? '未来 3 天' : '未来 24 小时');
+  $('#chartTitle').textContent = winLabel + ' · ' + cfg.label;
   const [a,b] = windowIdx();
   const n = Math.max(1, b-a+1);
 
@@ -679,7 +717,7 @@ function drawChart(){
       opacity="${on?1:(dim?.3:.9)}" stroke-linejoin="round"/>`);
   });
 
-  parts.push(`<text x="${PW-PR}" y="${PH-4}" text-anchor="end" font-family="ui-monospace,monospace" font-size="7.6" fill="#9B978D">+24 h</text>`);
+  parts.push(`<text x="${PW-PR}" y="${PH-4}" text-anchor="end" font-family="ui-monospace,monospace" font-size="7.6" fill="#9B978D">+${b-a} h</text>`);
   svg.setAttribute('viewBox',`0 0 ${PW} ${PH}`);
   svg.innerHTML = parts.join('');
   $('#chartAxis').textContent = `纵轴 ${lo.toFixed(0)} → ${hi.toFixed(0)} ${cfg.unit}`;
@@ -728,10 +766,38 @@ function renderRows(){
   $('#rowsMeta').textContent = `6 个 · ${VARS[vk].label} · ${S.timeArr.length?new Date(S.timeArr[ni]).getHours()+':00':'—'}`;
 }
 
+/* ——— 累积降水与降水概率（结论卡里那一行） ——— */
+function accumStats(){
+  const ni = nowIndex();
+  const s24 = [], s72 = [];
+  let prob = 0;
+  MODELS.forEach(m=>{
+    const pr = (S.hourly && S.hourly['precipitation_'+m.id]) || [];
+    let a = 0, b = 0;
+    for(let i=ni;i<pr.length && i<=ni+24;i++){ if(pr[i]!=null) a += pr[i]; }
+    for(let i=ni;i<pr.length && i<=ni+72;i++){ if(pr[i]!=null) b += pr[i]; }
+    s24.push(a); s72.push(b);
+    const pb = (S.hourly && S.hourly['precipitation_probability_'+m.id]) || [];
+    for(let i=ni;i<pb.length && i<=ni+24;i++){ if(pb[i]!=null && pb[i]>prob) prob = pb[i]; }
+  });
+  const med = arr => arr.length ? arr.slice().sort((x,y)=>x-y)[Math.floor(arr.length/2)] : null;
+  return {a24:med(s24), a72:med(s72), prob};
+}
+function renderAccum(){
+  const st = accumStats();
+  const f = v => v==null ? '—' : (v<0.05 ? '0' : v.toFixed(1));
+  $('#acc24').innerHTML = `24h 累计 <b>${f(st.a24)}</b> mm`;
+  $('#acc72').innerHTML = `72h 累计 <b>${f(st.a72)}</b> mm`;
+  const hasProb = !!(S.hourly && MODELS.some(m=>S.hourly['precipitation_probability_'+m.id]));
+  $('#accProb').innerHTML = !hasProb ? '最高概率 <b>—</b>'
+    : (st.prob>0 ? `最高概率 <b>${Math.round(st.prob)}%</b>` : '最高概率 <b>&le;5%</b>');
+}
+
 /* ——— 结论 / 高程 ——— */
 function renderVerdict(){
   if(!S.hourly) return;
   const dv = divergence(), ni = nowIndex();
+  $('#lblSpread').textContent = (S.win===240?'未来 10 天':(S.win===72?'未来 3 天':'未来 24 小时')) + ' · 六模型分歧';
   $('#spreadNum').textContent = '±' + fmt(dv.max/2,1);
   $('#spreadRange').textContent = `${fmt(dv.lo,1)} → ${fmt(dv.hi,1)} ℃`;
   $('#spreadWhen').textContent = `极差 ${fmt(dv.max,1)} ℃`;
@@ -794,7 +860,7 @@ function paint(){
   $('#placeName').textContent = S.place.name;
   $('#placeGeo').textContent =
     `${Math.abs(S.place.lat).toFixed(2)}°${S.place.lat>=0?'N':'S'} ${Math.abs(S.place.lon).toFixed(2)}°${S.place.lon>=0?'E':'W'} · 地形 ${Math.round(S.place.elev)} m · 格点 ${S.gridElev} m`;
-  drawChart(); renderRows(); renderVerdict(); renderElev();
+  drawChart(); renderRows(); renderVerdict(); renderAccum(); renderElev();
   const t = S.stamp || new Date();
   $('#footTime').textContent = `更新 ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')} · ${S.fromCache?'离线快照':'实时接口'}`;
 }
@@ -807,6 +873,17 @@ function toast(m){ const el=$('#toast'); el.textContent=m; el.classList.add('on'
 document.querySelectorAll('.seg button').forEach(b=>{
   b.onclick = () => setVar(b.dataset.var);
 });
+document.querySelectorAll('#winSeg button').forEach(b=>{
+  b.onclick = () => setWin(Number(b.dataset.win));
+});
+function setWin(w){
+  S.win = w;
+  document.querySelectorAll('#winSeg button').forEach(x=>{
+    const on = Number(x.dataset.win)===w;
+    x.classList.toggle('on',on); x.setAttribute('aria-selected',String(on));
+  });
+  drawChart(); renderRows(); renderVerdict(); renderAccum();
+}
 function setVar(v){
   S.varKey = v;
   document.querySelectorAll('.seg button').forEach(x=>{
