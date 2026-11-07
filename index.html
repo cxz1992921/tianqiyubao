@@ -111,7 +111,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
 .brand .kicker{font-family:var(--f-num);font-size:10.5px;letter-spacing:.16em;
   color:rgba(241,238,230,.62);text-transform:uppercase}
 .brand h1{font-family:var(--f-display);font-weight:600;font-size:30px;line-height:1.18;
-  letter-spacing:.01em;margin-top:9px;overflow-wrap:anywhere;word-break:keep-all}
+  letter-spacing:.01em;margin-top:9px;overflow-wrap:anywhere;word-break:keep-all;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .brand .geo{font-family:var(--f-num);font-size:11.5px;color:rgba(241,238,230,.72);
   margin-top:8px;letter-spacing:.02em;text-shadow:0 1px 3px rgba(10,18,22,.55)}
 .iconbtn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
@@ -308,6 +309,27 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
   transition:opacity .26s var(--ease),transform .26s var(--ease)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 
+/* 降温预警横条 */
+.alertbar{position:relative;margin:0 0 12px;padding:10px 14px;border-radius:12px;
+  background:#B5502F;color:#FBF6EE;font-size:13px;line-height:1.45;
+  box-shadow:0 2px 10px rgba(181,80,47,.25);animation:alertIn .3s var(--ease)}
+.alertbar b{font-weight:700}
+.alertbar .close{position:absolute;top:6px;right:8px;cursor:pointer;opacity:.7;
+  font-size:16px;line-height:1;padding:2px 4px}
+.alertbar .close:hover{opacity:1}
+@keyframes alertIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+
+/* GPS 定位按钮（换地点弹窗里） */
+.gpsloc{margin-top:12px;padding:10px 12px;border-radius:14px;background:#F4F0EA;
+  display:flex;align-items:center;gap:10px;cursor:pointer;transition:background .2s}
+.gpsloc:active{background:#EAE5DC}
+.gpsloc .dot{position:relative;width:36px;height:36px;border-radius:50%;background:#B5502F;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.gpsloc .dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  border:1.5px solid #B5502F;opacity:.4;animation:gpspulse 2s infinite}
+@keyframes gpspulse{0%{transform:scale(1);opacity:.4}100%{transform:scale(1.5);opacity:0}}
+.gpsloc .lbl{font-size:14px;font-weight:600;color:#1E2E33;letter-spacing:.5px}
+
 .winseg{display:flex;gap:6px;justify-content:flex-end;margin:2px 0 10px}
 .winseg button{border:1px solid rgba(30,46,51,.18);background:transparent;color:inherit;
   font-family:inherit;font-size:11px;letter-spacing:.04em;padding:7px 11px;cursor:pointer;
@@ -358,6 +380,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 
   <div id="flow">
+
+    <div id="alertBar" class="alertbar" hidden></div>
 
     <!-- 结论：六个模型的一致程度 -->
     <section class="verdict">
@@ -459,8 +483,14 @@ input{font:inherit;color:inherit;background:none;border:0;outline:none}
   <!-- 弹层一：找地点 -->
   <div class="modal" id="mPlace">
     <div class="grab"></div>
-    <h3>换一个山谷</h3>
-    <p class="hint">搜中文地名，或用下面的常去地点。</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <h3 style="margin:0;">换一个山谷</h3>
+      <div id="gpsBtn" style="position:relative;width:32px;height:32px;border-radius:50%;background:#B5502F;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
+        <span style="position:absolute;inset:-3px;border-radius:50%;border:1.5px solid #B5502F;opacity:.4;animation:gpspulse 2s infinite;"></span>
+        <svg width="14" height="14" viewBox="0 0 256 256" fill="#FBF6EE"><path d="M128,24A84.09,84.09,0,0,0,44,108c0,56,84,124,84,124s84-68,84-124A84.09,84.09,0,0,0,128,24Zm0,112a28,28,0,1,1,28-28A28,28,0,0,1,128,136Z"/></svg>
+      </div>
+    </div>
+    <p class="hint">搜中文地名，或直接输经纬度：39.96,116.07 / 39.96N 116.07E / 北纬39度57分 东经116度4分。</p>
     <div class="field">
       <svg class="ic" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
       <input id="q" placeholder="门头沟 / 百花山 / 灵山" autocomplete="off" enterkeyhint="search">
@@ -577,6 +607,29 @@ function absorb(j){
   return true;
 }
 
+/* ——— 触感/声音反馈：安卓震动，iOS 用短音代替（Web Audio 合成，无外部文件） ——— */
+function buzz(ok){
+  // 震动：安卓 Chrome 支持，iOS/桌面静默忽略
+  if(navigator.vibrate){
+    try{ navigator.vibrate(ok ? 15 : [10,60,10]); }catch(e){}
+  }
+  // 声音：iOS Safari 不支持震动，用短音反馈；桌面也会播（点了按钮才响，不打扰）
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    const ctx = new AC();
+    if(ctx.state === 'suspended') ctx.resume();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = ok ? 'sine' : 'triangle';
+    o.frequency.value = ok ? 880 : 220;
+    g.gain.setValueAtTime(0.12, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (ok ? 0.09 : 0.18));
+    o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + (ok ? 0.1 : 0.2));
+  }catch(e){}
+}
+
 async function loadData(opts={}){
   const skel = $('#plotSkel');
   skel.hidden = false;
@@ -586,12 +639,27 @@ async function loadData(opts={}){
     if(!absorb(j)) throw new Error('empty');
     S.fromCache = false;
     toast('六个模式已更新 · '+j.hourly.time.length+' 小时');
+    buzz(true);
     paint();
+    checkColdAlert();
     return true;
   }catch(e){
-    if(SEED && !S.hourly){ absorb(SEED); S.fromCache = true; paint();
-      toast('连不上 Open-Meteo，显示 11-06 19:12 的快照'); return false; }
-    if(!S.hourly){ toast('取数失败：'+e.message); }
+    // 把技术错误翻译成用户能懂的原因
+    let reason;
+    const m = (e.message||'').toLowerCase();
+    if(m.includes('timeout')||m.includes('超时')||m.includes('aborted')) reason='响应超时（12 秒未回）';
+    else if(m.includes('fetch')||m.includes('network')||m.includes('failed')||m.includes('internet')) reason='网络连不上 Open-Meteo';
+    else if(m.includes('empty')) reason='接口返回了空数据';
+    else reason = e.message || '未知错误';
+    buzz(false);
+    if(SEED && !S.hourly){
+      absorb(SEED); S.fromCache = true; paint();
+      toast('连不上 Open-Meteo，显示内置快照');
+    } else if(S.hourly){
+      toast('刷新失败：'+reason+'，仍显示旧数据');
+    } else {
+      toast('取数失败：'+reason);
+    }
     return false;
   }finally{
     skel.hidden = true; btn.classList.remove('rot');
@@ -659,6 +727,62 @@ function divergence(){
     if(med!=null && Math.abs(med)>Math.abs(tMax)){ tMax=med; tAt=i; }
   }
   return {max:maxSpan, at:maxAt, lo:loAll, hi:hiAll, tmax:Math.abs(tMax), tAt};
+}
+
+/* ——— 降温预警：打开 app 时自动对比未来 24h 六模型中位数温度 ———
+   纯前端本地判断：降幅 ≥5℃ 才报；同一天同地点只弹一次。
+   注意：这是「打开 app 时检查」，不是真·后台推送（app 关了不会自己弹）。 */
+function checkColdAlert(){
+  if(!S.hourly || !S.timeArr) return;
+  const [a,b] = windowIdx();
+  if(b-a < 12) return;
+  // 每个时间点取六模型温度的中位数
+  const meds = [];
+  for(let i=a;i<=b;i++){
+    const vals = MODELS.map(m=>seriesFor(m.id,'temp')[i]).filter(v=>v!=null).sort((x,y)=>x-y);
+    meds.push(vals.length ? vals[Math.floor(vals.length/2)] : null);
+  }
+  const cur = meds[0];
+  if(cur==null) return;
+  let lo=cur, loAt=a;
+  for(let i=1;i<meds.length;i++){
+    if(meds[i]!=null && meds[i]<lo){ lo=meds[i]; loAt=a+i; }
+  }
+  const drop = cur - lo;
+  if(drop < 5) return;
+  // 去重：同一天同地点只弹一次
+  const now = new Date();
+  const dayKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  const placeKey = S.place.lat.toFixed(2)+','+S.place.lon.toFixed(2);
+  const seenKey = dayKey+'|'+placeKey;
+  try{
+    if(localStorage.getItem('jx_cold_alert') === seenKey) return;
+    localStorage.setItem('jx_cold_alert', seenKey);
+  }catch(e){}
+  const loDate = new Date(S.timeArr[loAt]);
+  const hour = String(loDate.getHours()).padStart(2,'0');
+  const isTomorrow = loDate.getDate() !== now.getDate();
+  const when = (isTomorrow ? '明天 ' : '今天 ') + hour+':00';
+  const title = S.place.name || '这里';
+  const bodyText = `${title}预计降温 ${drop.toFixed(1)}℃，${when}低至 ${lo.toFixed(1)}℃，注意保暖。`;
+  // 页面顶部横条
+  const bar = $('#alertBar');
+  bar.innerHTML = `<span class="close" onclick="this.parentNode.hidden=true">×</span>`
+    + `<b>降温预警</b> · ${bodyText}`;
+  bar.hidden = false;
+  toast('已触发降温预警');
+  // demo 模式：URL 带 ?demo=1 时强制显示（预览用）
+  if(new URLSearchParams(location.search).get('demo')==='1'){
+    bar.innerHTML = `<span class="close" onclick="this.parentNode.hidden=true">×</span>`
+      + `<b>降温预警（演示）</b> · ${title}预计降温 6.2℃，明天 06:00 低至 -8.5℃，注意保暖。`;
+    bar.hidden = false;
+  }
+  // 系统通知：仅当页面在后台且权限已授予时弹（前台时 banner 已可见）
+  if('Notification' in window && Notification.permission === 'granted' && document.hidden){
+    try{
+      new Notification('降温预警 · '+title, { body: bodyText, icon: location.origin+'/icon-192.png', tag:'jx-cold' });
+    }catch(e){}
+  }
 }
 
 /* ——— 折线图 ——— */
@@ -876,7 +1000,11 @@ function drawProfile(arr){
 
 /* ——— 主渲染 ——— */
 function paint(){
-  $('#placeName').textContent = S.place.name;
+  const nm = S.place.name;
+  const h1 = $('#placeName');
+  h1.textContent = nm;
+  // 名字长了自动收字号，两行也压不到下面的坐标行
+  h1.style.fontSize = nm.length<=10 ? '' : (nm.length<=16 ? '25px' : '21px');
   $('#placeGeo').textContent =
     `${Math.abs(S.place.lat).toFixed(2)}°${S.place.lat>=0?'N':'S'} ${Math.abs(S.place.lon).toFixed(2)}°${S.place.lon>=0?'E':'W'} · 地形 ${Math.round(S.place.elev)} m · 格点 ${S.gridElev} m`;
   drawChart(); renderRows(); renderVerdict(); renderAccum(); renderElev();
@@ -975,15 +1103,142 @@ async function goPlace(p){
   return true;
 }
 
+/* GPS 定位：点一下弹窗里的 GPS 按钮 */
+$('#gpsBtn').addEventListener('click', function(){
+  if(!navigator.geolocation){ toast('这浏览器不支持定位'); buzz(false); return; }
+  toast('正在定位…');
+  navigator.geolocation.getCurrentPosition(async function(pos){
+    const lat = +pos.coords.latitude.toFixed(4);
+    const lon = +pos.coords.longitude.toFixed(4);
+    buzz(true);
+    await goPlace({name:'我的位置', lat, lon, elev:null});
+  }, function(err){
+    buzz(false);
+    let msg = '定位失败';
+    if(err.code === err.PERMISSION_DENIED) msg = '定位被拒绝，请在浏览器设置里允许';
+    else if(err.code === err.POSITION_UNAVAILABLE) msg = '拿不到位置信号，到开阔地再试';
+    else if(err.code === err.TIMEOUT) msg = '定位超时（10 秒），再点一次试试';
+    toast(msg);
+  }, {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+});
+
 /* 搜索：Enter 是第二条通路，和点击走同一个函数 */
 const q=$('#q'), resBox=$('#resBox');
+
+/* 解析各种经纬度写法 → {lat, lon} 或 null
+   支持：39.96,116.07 / 39.96 116.07 / 39.96N 116.07E / N39.96 E116.07
+        39°57'36"N 116°04'12"E / 39°57.6'N 116°04.2'E
+        北纬39度57分36秒 东经116度4分12秒 */
+function parseLatLon(raw){
+  if(!raw) return null;
+  let s = String(raw).trim();
+  if(!s || !/\d/.test(s)) return null;
+
+  // 统一符号
+  s = s.replace(/[,，、；;／\/]/g,' ')
+       .replace(/[（]/g,' ').replace(/[）]/g,' ')
+       .replace(/度/g,'°').replace(/分/g,"'").replace(/秒/g,'"')
+       .replace(/[′’‘]/g,"'").replace(/[″”]/g,'"')
+       .replace(/北纬|北緯/g,'N').replace(/南纬|南緯/g,'S')
+       .replace(/东经|東經/g,'E').replace(/西经|西經/g,'W')
+       .replace(/[Nn]/g,'N').replace(/[Ss]/g,'S')
+       .replace(/[Ee]/g,'E').replace(/[Ww]/g,'W');
+
+  // 把"数字+度分秒"段换成十进制度
+  function nums(t){
+    const m = t.match(/-?\d+(?:\.\d+)?/g);
+    if(!m) return null;
+    const a = m.map(Number);
+    if(a.length===1) return a[0];
+    let v = Math.abs(a[0]) + (a[1]||0)/60 + (a[2]||0)/3600;
+    if(a[0]<0 || /^\s*-/.test(t)) v = -v;
+    return v;
+  }
+
+  let lat=null, lon=null;
+  const hemi=[];
+  s.replace(/[NSEW]/g,(m,i)=>{ hemi.push({h:m,i}); return m; });
+
+  if(hemi.length){
+    // 在方位字母处切段：文字 | 字母 | 文字 | 字母 | …
+    let marked='', last=0;
+    hemi.forEach(h=>{ marked += s.slice(last,h.i) + '|' + h.h + '|'; last = h.i+1; });
+    marked += s.slice(last);
+    const parts = marked.split('|');
+    const used = new Array(parts.length).fill(false);
+    for(let i=0;i<parts.length;i++){
+      if(!/^[NSEW]$/.test(parts[i])) continue;
+      let txt=null, idx=-1;
+      if(i-1>=0 && !used[i-1] && /\d/.test(parts[i-1])){ txt=parts[i-1]; idx=i-1; }
+      else if(i+1<parts.length && !used[i+1] && /\d/.test(parts[i+1])){ txt=parts[i+1]; idx=i+1; }
+      if(!txt) continue;
+      used[idx]=true;
+      let v = nums(txt);
+      if(v==null) continue;
+      const h = parts[i];
+      if(h==='S' || h==='W') v = -Math.abs(v);
+      if(h==='N' || h==='S') lat = v; else lon = v;
+    }
+  } else {
+    // 无方位字母：按空白拆成两段
+    const toks = s.split(/\s+/).filter(t=>/\d/.test(t));
+    if(toks.length===2){ lat = nums(toks[0]); lon = nums(toks[1]); }
+    else if(toks.length===1){
+      // 只有一段但里面有两组数字，如 "39.96116.07" 不拆；跳过
+    }
+  }
+
+  if(lat==null || lon==null) return null;
+  if(!isFinite(lat) || !isFinite(lon)) return null;
+  // 有人习惯先写经度：116.07,39.96 → 自动对调
+  if(Math.abs(lat)>90 && Math.abs(lon)<=90 && Math.abs(lat)<=180){ const tmp=lat; lat=lon; lon=tmp; }
+  if(Math.abs(lat)>90 || Math.abs(lon)>180) return null;
+  return {lat:+lat.toFixed(4), lon:+lon.toFixed(4)};
+}
+
 async function search(name){
-  if(!name.trim()) return;
+  name = name.trim();
+  if(!name) return;
+  // 先试经纬度（各种写法）
+  const ll = parseLatLon(name);
+  if(ll){
+    resBox.innerHTML = '';
+    await goPlace({name:`${ll.lat}, ${ll.lon}`, lat:ll.lat, lon:ll.lon, elev:null});
+    return;
+  }
   resBox.innerHTML = `<div class="empty">搜索中…</div>`;
   try{
-    const j = await api(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=6&language=zh&format=json`, 8000);
-    const rs = j.results||[];
-    if(!rs.length){ resBox.innerHTML = `<div class="empty">没有找到「${name}」。试试更完整的写法：门头沟、百花山。</div>`; return; }
+    // 两个源并行：Open-Meteo（GeoNames，带海拔，优先）+ Photon（OSM，免 key，覆盖山峰/景区）
+    const [j, n] = await Promise.all([
+      api(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=6&language=zh&format=json`, 8000).catch(()=>null),
+      api(`https://photon.komoot.io/api/?q=${encodeURIComponent(name)}&limit=8`, 9000).catch(()=>null)
+    ]);
+    let rs = (j&&j.results)||[];
+    // Photon 结果：滤掉公路/水系/铁路这类"不是地点"的条目，有正经地名就优先正经的
+    const fs = ((n&&n.features)||[]).filter(f=>f.properties && f.properties.name && f.geometry && f.geometry.coordinates);
+    const pref = fs.filter(f=>!['highway','waterway','railway'].includes(f.properties.osm_key));
+    const ph = (pref.length?pref:fs).map(f=>{
+      const p=f.properties, c=f.geometry.coordinates;
+      return {name:p.name, admin1:[p.state,p.city].filter(Boolean).join(' · '),
+        country:p.country||'', latitude:+c[1], longitude:+c[0],
+        elevation:(typeof p.elevation==='number')?p.elevation:null};
+    });
+    // 合并去重：同一个点（约 10 km 内）只留一条
+    for(const p of ph){
+      if(rs.some(r=>Math.abs(r.latitude-p.latitude)<0.1 && Math.abs(r.longitude-p.longitude)<0.1)) continue;
+      rs.push(p);
+    }
+    // 就近优先：离当前地点 120 km 内的同名地点浮到前面（北京搜"黄草梁"先出京西那个）
+    if(rs.length && S && S.place){
+      const near = r=>{
+        const dx=(r.longitude-S.place.lon)*Math.cos((r.latitude+S.place.lat)/2*Math.PI/180)*111;
+        const dy=(r.latitude-S.place.lat)*111;
+        return Math.sqrt(dx*dx+dy*dy) < 120;
+      };
+      rs = rs.filter(near).concat(rs.filter(r=>!near(r)));
+    }
+    rs = rs.slice(0,6);
+    if(!rs.length){ resBox.innerHTML = `<div class="empty">没有找到「${name}」。试试更大的地名，或直接输经纬度（39.96,116.07）。</div>`; return; }
     resBox.innerHTML = rs.map((r,i)=>{
       const fav = isFav(r.latitude, r.longitude);
       return `<button data-i="${i}">
@@ -1084,6 +1339,19 @@ window.__UI_CAPTURE__ = {
   // 离线壳：接口断了也还能打开，用内嵌快照顶住
   if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost' || location.hostname==='127.0.0.1')){
     navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+  // 请求通知权限（用于降温预警；用户拒绝过就不再问）
+  if('Notification' in window && Notification.permission === 'default'){
+    setTimeout(function(){ try{ Notification.requestPermission(); }catch(e){} }, 1500);
+  }
+  // demo 预览：URL 带 ?demo=1 直接显示一条示例预警（不依赖真实数据）
+  if(new URLSearchParams(location.search).get('demo')==='1'){
+    setTimeout(function(){
+      var bar = document.getElementById('alertBar');
+      bar.innerHTML = '<span class="close" onclick="this.parentNode.hidden=true">×</span>'
+        + '<b>降温预警（演示）</b> · 百花山 · 北京市预计降温 6.2℃，明天 06:00 低至 -8.5℃，注意保暖。';
+      bar.hidden = false;
+    }, 1200);
   }
   // 上次看的地点：接上，免得每次打开都要重新点一次收藏
   const seedPlace = S.place ? Object.assign({}, S.place) : null;
