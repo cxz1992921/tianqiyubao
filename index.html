@@ -1087,19 +1087,63 @@ function toggleFav(p){
   saveFavs(a); renderFavs(); return true;
 }
 
+/* 反查地名：把经纬度换成一个看得懂的名字
+   分级降级：山峰/村落/景点 → 乡镇·附近 → 交给调用方兜底（"我的位置"或坐标）
+   用 Photon（OSM，免 key，国内实测 1 秒内）；Nominatim 的 reverse 国内超时，不用 */
+async function reverseName(lat, lon){
+  try{
+    const j = await api(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&limit=10`, 6000);
+    const fs = (j&&j.features)||[];
+    const R=6371000, rad=Math.PI/180;
+    const dist=(la,lo)=>{
+      const dla=(la-lat)*rad, dlo=(lo-lon)*rad;
+      const a=Math.sin(dla/2)**2+Math.cos(lat*rad)*Math.cos(la*rad)*Math.sin(dlo/2)**2;
+      return 2*R*Math.asin(Math.sqrt(a));
+    };
+    /* 0 山峰 / 1 村落·小地名 / 2 景点·营地 / 3 乡镇；其余（步道、公路、公交站、
+       雷达站、水系、铁路、旅馆）一律不要 —— 它们不是"我在哪座山"的答案 */
+    const tier = p=>{
+      const k=p.osm_key, v=p.osm_value||'';
+      if(k==='natural' && v==='peak') return 0;
+      if(k==='place' && /^(locality|hamlet|village|town|city|peak|islet)$/.test(v)) return 1;
+      if(k==='tourism' && /^(attraction|viewpoint|view_point|alpine_hut|camp_site|wilderness_hut|chalet)$/.test(v)) return 2;
+      if(k==='boundary' && v==='administrative') return 3;
+      return 9;
+    };
+    let best=null;
+    for(const f of fs){
+      const p=f.properties||{}, c=f.geometry&&f.geometry.coordinates;
+      if(!p.name || !c) continue;
+      const t=tier(p); if(t>3) continue;
+      const d=dist(c[1],c[0]);
+      if(d > (t===3?15000:5000)) continue;
+      const score=t*1000 + d/1000;      /* 先看类型，同类型看远近 */
+      if(!best || score<best.score) best={score, name:p.name, t};
+    }
+    if(!best) return null;
+    return {name: best.name, near: best.t===3};
+  }catch(e){ return null; }
+}
+
 /* 换地点只有这一条实现，搜索结果与收藏 chip 都走它 */
 async function goPlace(p){
   const prev = S.place;
-  S.place = {name:p.name, lat:p.lat, lon:p.lon, elev:(p.elev!=null?p.elev:500)};
+  const unnamed = !p.name;                                  /* GPS / 手输经纬度：先给个临时名 */
+  const fb = p.fallbackName || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`;
+  S.place = {name: p.name || fb, lat:p.lat, lon:p.lon, elev:(p.elev!=null?p.elev:500)};
   S.userElev = S.place.elev;
   S.focus = null;
   openModal(null);
-  toast(`正在向六个模式取 ${p.name} 的数据…`);
+  toast(`正在向六个模式取 ${S.place.name} 的数据…`);
+  /* 无名点：取天气和反查地名并行走，谁慢等谁 */
+  const revP = unnamed ? reverseName(p.lat, p.lon) : Promise.resolve(null);
   const ok = await loadData();
+  const rev = await revP;
   if(!ok){ S.place = prev; paint(); toast('这个点没取到数据，仍显示上一个地点'); return false; }
+  if(rev){ S.place.name = rev.name + (rev.near?' · 附近':''); paint(); }
   loadProfile();
   try{ localStorage.setItem('jx_last', JSON.stringify(S.place)); }catch(e){}
-  toast(`已切到 ${p.name} · ${Math.round(S.place.elev)} m，可在「海拔」里改`);
+  toast(`已切到 ${S.place.name} · ${Math.round(S.place.elev)} m，可在「海拔」里改`);
   return true;
 }
 
@@ -1111,7 +1155,7 @@ $('#gpsBtn').addEventListener('click', function(){
     const lat = +pos.coords.latitude.toFixed(4);
     const lon = +pos.coords.longitude.toFixed(4);
     buzz(true);
-    await goPlace({name:'我的位置', lat, lon, elev:null});
+    await goPlace({lat, lon, elev:null, fallbackName:'我的位置'});
   }, function(err){
     buzz(false);
     let msg = '定位失败';
@@ -1203,7 +1247,7 @@ async function search(name){
   const ll = parseLatLon(name);
   if(ll){
     resBox.innerHTML = '';
-    await goPlace({name:`${ll.lat}, ${ll.lon}`, lat:ll.lat, lon:ll.lon, elev:null});
+    await goPlace({lat:ll.lat, lon:ll.lon, elev:null});
     return;
   }
   resBox.innerHTML = `<div class="empty">搜索中…</div>`;
@@ -1362,6 +1406,15 @@ window.__UI_CAPTURE__ = {
     if(!ok && seedPlace && last){ S.place = seedPlace; paint(); }   // 取不到就退回快照的地点
     loadProfile();
   });
+  /* 首开（没有上次记录）：默认坐标也反查真名；反查不到就保留「北京 · 西山」 */
+  if(!last){
+    reverseName(S.place.lat, S.place.lon).then(r=>{
+      if(!r) return;
+      S.place.name = r.name + (r.near?' · 附近':'');
+      paint();
+      try{ localStorage.setItem('jx_last', JSON.stringify(S.place)); }catch(e){}
+    });
+  }
 })();
 </script>
 </body>
